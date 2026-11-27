@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import logging
 import pathlib
 import re
 import traceback
@@ -35,19 +36,26 @@ from ..filters import WidgetFilter
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..util import as_pandas
-from ..views.base import Panel, Table, View
+from ..views.base import (
+    Panel, Table, View, _force_light_theme,
+)
 from .analysis import Analysis
 from .config import FORMAT_ICONS, FORMAT_LABELS
 from .controls import (
     AnnotationControls, CopyControls, ExplainControls, RetryControls,
 )
-from .utils import describe_data, get_frame
+from .utils import column_tooltips, describe_data, get_frame
 
 if TYPE_CHECKING:
     from panel.chat.feed import ChatFeed
 
     from .report import Task
 
+
+# vl-convert logs Vega-Lite's spec warnings, e.g. on charts rendered to an
+# image for the LLM. Without any logging set up Python prints them, so in a
+# notebook they land in the cell; a configured logger still receives them.
+logging.getLogger("vl_convert").addHandler(logging.NullHandler())
 
 _PAGINATED_TABLE_STYLES = """
 .tabulator-footer {
@@ -66,6 +74,27 @@ _PAGINATED_TABLE_STYLES = """
 .tabulator .tabulator-footer .tabulator-pages {
   display: inline-flex !important;
   flex-wrap: wrap !important;
+}
+/* Header tooltips (column provenance) otherwise render light text on a
+   white box under dark themes; match the MUI tooltip instead. */
+.tabulator-tooltip {
+  background: var(--mui-palette-Tooltip-bg, #616161) !important;
+  color: var(--mui-palette-common-white, #fff) !important;
+  border: none !important;
+  border-radius: 4px !important;
+  padding: 6px 10px !important;
+  font-size: 12px !important;
+  max-width: 420px !important;
+  white-space: normal !important;
+}
+"""
+
+# Ace defaults to 12px, which looks undersized next to the chat text and the
+# tables. Use MUI's ``body2`` size so code reads at a size matching the rest of
+# the app.
+_CODE_EDITOR_STYLES = """
+.ace_editor {
+  font-size: 0.875rem !important;
 }
 """
 
@@ -108,9 +137,10 @@ class LumenEditor(Viewer):
         # while the spec is just vega_spec
         self._spec_dict = spec_dict
         super().__init__(**params)
+        # Set before the view, which renders at once when no event loop runs
+        self._last_output = {}
         self.editor = self._render_editor()
         self.view = ParamMethod(self.render, inplace=True, sizing_mode='stretch_width')
-        self._last_output = {}
 
     def _code_editor(self) -> CodeEditor:
         """A CodeEditor two-way bound to this editor's spec."""
@@ -124,7 +154,8 @@ class LumenEditor(Viewer):
             indent=2,
             margin=(0, 10),
             disabled=self.param.spec.rx.is_(None),
-            styles={"border": "1px solid var(--border-color)"}
+            styles={"border": "1px solid var(--border-color)"},
+            stylesheets=[_CODE_EDITOR_STYLES],
         )
         editor.link(self, bidirectional=True, value='spec')
         return editor
@@ -227,10 +258,14 @@ class LumenEditor(Viewer):
             self.component, self.spec, self._spec_dict, pipeline=pipeline
         )
 
+    def _pipeline_table_kwargs(self, pipeline) -> dict[str, Any]:
+        return {}
+
     async def _render_pipeline(self, pipeline):
         table = Table(
             pipeline=pipeline, pagination='remote', min_height=200,
             sizing_mode="stretch_both", stylesheets=[_PAGINATED_TABLE_STYLES],
+            **self._pipeline_table_kwargs(pipeline),
         )
         layout = Column(table)
         for sql_limit in pipeline.sql_transforms:
@@ -340,7 +375,7 @@ class VegaLiteEditor(LumenEditor):
             spec["width"] = 800
         if spec.get("height") == "container" or "height" not in spec:
             spec["height"] = 400
-        with self.param.update(spec=dump_yaml(spec)):
+        with self.param.update(spec=dump_yaml(spec)), _force_light_theme():
             out = self.component.get_panel().export(render_fmt, **kwargs)
 
         if fmt in self._pillow_formats:
@@ -602,6 +637,16 @@ class SQLEditor(LumenEditor):
         "boolean": "toggle_on",
     }
 
+    def _pipeline_table_kwargs(self, pipeline) -> dict[str, Any]:
+        # Derived from the current spec so tooltips follow SQL edits.
+        columns = tuple(str(col) for col in pipeline.data.columns)
+        try:
+            header_tooltips = column_tooltips(self.spec, pipeline.source.dialect, columns)
+        except Exception:
+            # Tooltips are a nicety; never let lineage break the table.
+            header_tooltips = {}
+        return {"header_tooltips": dict(header_tooltips)} if header_tooltips else {}
+
     def _render_editor(self):
         editor = super()._render_editor()
         # Add top/bottom margin so the SQL code editor isn't clipped by the
@@ -840,9 +885,16 @@ class MultiChartEditor(LumenEditor):
         if fmt == "yaml":
             return StringIO("---\n".join(editor.spec for editor in editors))
         if fmt == "html":
-            # Save the live stacked composite as one standalone, offline page.
+            # Rebuilt rather than saved live: the live stack caches panes
+            # rendered in the dashboard theme.
             buf = StringIO()
-            self.component.get_panel().save(buf)
+            with _force_light_theme():
+                stacked = Column(
+                    *(editor.component.get_panel() for editor in editors
+                      if editor.component is not None),
+                    sizing_mode="stretch_width",
+                )
+                stacked.save(buf)
             buf.seek(0)
             return buf
         if not editors:

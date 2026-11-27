@@ -15,7 +15,10 @@ Team lead responsible for creating step-by-step plan addressing user queries by 
 - Stay within scope of user's request (don't plot unless asked, etc.)
 - Often unnecessary to use same actor multiple times in single plan
 - NEVER use same actor consecutively - combine multiple tasks for same actor into single step
-- Never mention lack of data in plan - assume actors will handle data discovery
+- Never mention lack of data in plan - assume actors will handle data discovery. The one exception: when the Current Data Context shows that no table has what the question needs, set `unanswerable` to the reason and give no steps.
+{%- if values_visible is not defined or values_visible %} That covers a column, a period or a kind of value.
+{%- else %} The context holds no values or ranges, so only a missing table or column can make a question unanswerable; never claim a period or a value is missing, plan the steps and let the query find out.
+{%- endif %}
 - Do not ignore actor's exclusions and conditions
 - When keys already present in memory, utilize them to construct plan efficiently—avoid assigning actor to produce memory keys already available
 - **Visualization continuity**: Prefer previously used visualization agent if conditions still apply to current request
@@ -147,12 +150,12 @@ Context: No local weather table; `SourceLookup`, `SourceAgent`, and `ChatAgent` 
 ## Tools
 {% for tool in tools %}
 {%- set missing_reqs = [] %}
-{%- for req in tool.input_schema.__required_keys__ %}
+{%- for req in tool.input_schema.__required_keys__ | sort %}
   {%- if req not in memory.keys() or memory[req] is none %}
     {%- set _ = missing_reqs.append(req) %}
   {%- endif %}
 {%- endfor %}
-### `{{ tool.__class__.__name__ }}` {%- if missing_reqs %} — Blocked, requires: `{{ missing_reqs | join('`, `') }}`
+### `{{ tool | normalized_name }}` {%- if missing_reqs %} — Blocked, requires: `{{ missing_reqs | join('`, `') }}`
 {%- else %} — Ready
 {%- endif %}
 {{ ' '.join(dedent(tool.purpose).strip().split()) }}
@@ -167,22 +170,22 @@ Conditions for use:
 ## Agents
 {% for agent in agents %}
 {%- set missing_reqs = [] %}
-{%- for req in agent.input_schema.__required_keys__ %}
+{%- for req in agent.input_schema.__required_keys__ | sort %}
   {%- if req not in memory.keys() or memory[req] is none %}
     {%- set _ = missing_reqs.append(req) %}
   {%- endif %}
 {%- endfor %}
-### `{{ agent.__class__.__name__ }}` {%- if missing_reqs %} — Blocked, requires: `{{ missing_reqs | join('`, `') }}`
+### `{{ agent | normalized_name }}` {%- if missing_reqs %} — Blocked, requires: `{{ missing_reqs | join('`, `') }}`
   {%- set providers = [] %}
   {%- for req in missing_reqs %}
     {%- for tool in tools %}
       {%- if req in tool.output_schema.__annotations__ %}
-        {%- set _ = providers.append(tool.__class__.__name__) %}
+        {%- set _ = providers.append(tool | normalized_name) %}
       {%- endif %}
     {%- endfor %}
     {%- for other_agent in agents %}
       {%- if req in other_agent.output_schema.__annotations__ %}
-        {%- set _ = providers.append(other_agent.name[:-5]) %}
+        {%- set _ = providers.append(other_agent | normalized_name) %}
       {%- endif %}
     {%- endfor %}
   {%- endfor %}
@@ -317,7 +320,7 @@ Failed because: Plan didn't satisfy dependencies: `{{ unmet_dependencies }}`
 {% if candidates %}
 Available solutions:
 {%- for candidate in candidates %}
-- `{{ candidate.name[:-5] if candidate.name.endswith('Agent') else candidate.__class__.__name__ }}` provides: `{{ candidate.output_schema.__annotations__ | join('`, `') }}`
+- `{{ candidate | normalized_name }}` provides: `{{ candidate.output_schema.__annotations__ | join('`, `') }}`
 {%- endfor %}
 {% endif %}
 

@@ -1,4 +1,6 @@
+import asyncio
 import importlib.util
+import itertools
 import json
 
 from pathlib import Path
@@ -7,6 +9,9 @@ import pandas as pd
 import panel as pn
 import pytest
 
+from bokeh.core.serialization import Serializer
+from holoviews import Dataset
+
 from lumen.panel import DownloadButton
 from lumen.pipeline import Pipeline
 from lumen.sources.base import FileSource, InMemorySource
@@ -14,7 +19,8 @@ from lumen.state import state
 from lumen.tests.utils import Polygon, gpd, requires_geopandas
 from lumen.variables.base import Variables
 from lumen.views.base import (
-    DeckGLView, Panel, Table, VegaLiteView, View, hvOverlayView, hvPlotView,
+    DeckGLView, Table, VegaLiteView, View, _force_light_theme, hvOverlayView,
+    hvPlotView,
 )
 
 # duckdb is a core dependency but the minimal test-core env omits it, and the
@@ -451,6 +457,39 @@ def test_vega_lookup_with_its_own_data_is_left_alone(set_root):
     assert final_spec["transform"][0]["from"]["data"] == {"values": [{"A": 1, "B": 2}]}
 
 
+def _layered_spec(layer_data):
+    return {"layer": [{"data": layer_data, "mark": "bar", "encoding": {"x": {"field": "A", "type": "quantitative"}}}]}
+
+
+def test_vega_layer_naming_an_unknown_dataset_gets_the_table(set_root):
+    """A layer naming a dataset that was never registered draws nothing and
+    raises nothing, so it is left to inherit the table's data."""
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = _layered_spec({"name": "avg_by_group"})
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert "data" not in final_spec["layer"][0]
+    assert len(final_spec["data"]["values"]) == len(pipeline.data)
+    assert spec["layer"][0]["data"] == {"name": "avg_by_group"}
+
+
+@pytest.mark.parametrize("layer_data", [
+    {"name": "populations"},
+    {"values": [{"A": 1}]},
+    {"sphere": True},
+], ids=["registered-name", "inline-values", "generator"])
+def test_vega_layer_with_resolvable_data_is_left_alone(set_root, layer_data):
+    set_root(str(Path(__file__).parent.parent))
+    pipeline = Pipeline(source=FileSource(tables={'test': 'sources/test.csv'}), table="test")
+    spec = dict(_layered_spec(layer_data), datasets={"populations": [{"A": 1}]})
+
+    final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
+
+    assert final_spec["layer"][0]["data"] == layer_data
+
+
 def test_vega_datasets_are_not_accumulated_across_renders(set_root):
     """self.spec is reused between renders, so registering into its own datasets
     dict would leave a DataFrame behind on the caller's spec."""
@@ -513,6 +552,176 @@ def test_vega_defaults_schema(set_root):
     final_spec = VegaLiteView(spec=spec, pipeline=pipeline).get_panel().object
 
     assert final_spec["$schema"] == "https://vega.github.io/schema/vega-lite/v5.json"
+
+
+def _vega_theme_view(**params):
+    pipeline = Pipeline(
+        source=InMemorySource(tables={'test': pd.DataFrame({'A': [1, 2], 'B': [3, 4]})}),
+        table='test',
+    )
+    spec = {
+        "mark": "bar",
+        "encoding": {
+            "x": {"field": "A", "type": "nominal"},
+            "y": {"field": "B", "type": "quantitative"},
+        },
+    }
+    return VegaLiteView(spec=spec, pipeline=pipeline, **params)
+
+
+def test_vegalite_auto_theme_defaults_to_light():
+    """With no theme selected the Vega pane keeps its light default."""
+    assert _vega_theme_view().get_panel().theme is None
+
+
+def test_vegalite_auto_theme_follows_dark_config():
+    """The chart is themed at render time, so a dark session gets the Vega
+    dark theme without the spec having to carry any colors."""
+    view = _vega_theme_view()
+
+    with pn.config.set(theme='dark'):
+        assert view.get_panel().theme == 'dark'
+
+
+def test_vegalite_auto_theme_follows_dark_template(monkeypatch):
+    """A served dashboard carries its theme on the registered template rather
+    than on pn.config.theme, so the template has to be consulted too."""
+    class _Doc:
+        session_context = None
+        _session_context = None
+
+    template = pn.template.MaterialTemplate(theme='dark')
+    doc = _Doc()
+    monkeypatch.setattr(pn.state, 'curdoc', doc)
+    monkeypatch.setattr(pn.state, '_templates', {doc: template})
+
+    assert _vega_theme_view().get_panel().theme == 'dark'
+
+
+def test_vegalite_explicit_theme_overrides_dark_config():
+    """An explicit light theme wins over the active dark session."""
+    view = _vega_theme_view(theme='light')
+
+    with pn.config.set(theme='dark'):
+        assert view.get_panel().theme is None
+
+
+def test_vegalite_explicit_dark_theme():
+    assert _vega_theme_view(theme='dark').get_panel().theme == 'dark'
+
+
+def test_vegalite_explicit_theme_roundtrip():
+    spec = _vega_theme_view(theme='dark').to_spec()
+
+    assert View.from_spec(spec).theme == 'dark'
+
+
+def test_vegalite_dark_theme_sets_readable_text_marks():
+    """Vega's dark theme leaves text marks black; default them to white at
+    render time, without writing the color into the spec."""
+    view = _vega_theme_view()
+
+    with pn.config.set(theme='dark'):
+        pane = view.get_panel()
+
+    assert pane.object['config']['text']['color'] == '#ffffff'
+    assert 'config' not in view.spec
+    assert 'config' not in view.to_spec()['spec']
+
+
+def test_vegalite_dark_theme_keeps_explicit_text_color():
+    view = _vega_theme_view()
+    view.spec = dict(view.spec, config={'text': {'color': 'red'}})
+
+    with pn.config.set(theme='dark'):
+        pane = view.get_panel()
+
+    assert pane.object['config']['text']['color'] == 'red'
+
+
+def test_vegalite_rerenders_when_config_theme_changes(monkeypatch):
+    """Existing charts follow a dark-mode toggle instead of staying on the
+    theme they were first rendered with."""
+    # A server document defers theme updates until Panel's hidden config
+    # parameter has finished validating and config.theme is settled.
+    class _Request:
+        arguments = {}
+
+    class _SessionContext:
+        session = None
+        request = _Request()
+
+    class _Doc:
+        session_context = _SessionContext()
+        _session_context = None
+
+        def __init__(self):
+            self.callbacks = []
+
+        def add_next_tick_callback(self, callback):
+            self.callbacks.append(callback)
+
+    doc = _Doc()
+    monkeypatch.setattr(pn.state, 'curdoc', doc)
+    view = _vega_theme_view()
+    assert view.panel is not None
+
+    def flush():
+        while doc.callbacks:
+            doc.callbacks.pop(0)()
+
+    assert view._panel.theme is None
+
+    pn.config.theme = 'dark'
+    flush()
+
+    assert view._panel.theme == 'dark'
+    assert view._panel.object['config']['text']['color'] == '#ffffff'
+
+    pn.config.theme = 'default'
+    flush()
+
+    assert view._panel.theme is None
+    assert 'config' not in view._panel.object
+
+
+def test_vegalite_rerenders_on_theme_change_without_session(monkeypatch):
+    """A notebook has no session, but its event loop lets the update wait for
+    config.theme to settle."""
+    monkeypatch.setattr(pn.config, '_theme_', None)
+    view = _vega_theme_view()
+    assert view.panel is not None
+
+    async def toggle(theme):
+        pn.config.theme = theme
+        await asyncio.sleep(0)
+        return view._panel.theme
+
+    assert asyncio.run(toggle('dark')) == 'dark'
+    assert asyncio.run(toggle('default')) is None
+
+
+def test_vegalite_exports_force_light_theme():
+    """A chart pinned to dark still exports light."""
+    view = _vega_theme_view(theme='dark')
+
+    with _force_light_theme():
+        pane = view.get_panel()
+
+    assert pane.theme is None
+    assert 'config' not in pane.object
+
+
+def test_vegalite_auto_theme_is_not_serialized():
+    """Theme is a property of the viewer, not the chart, so it must stay out of
+    an exported spec until someone explicitly pins one."""
+    view = _vega_theme_view()
+
+    assert 'theme' not in view.to_spec()
+
+    view.theme = 'dark'
+
+    assert view.to_spec()['theme'] == 'dark'
 
 
 @requires_geopandas
@@ -615,27 +824,106 @@ def test_deckgl_view_geometry_as_geojson():
     json.dumps(data)  # must be serializable
 
 
-@requires_geopandas
-def test_vegalite_view_geometry_as_geoshape_data():
-    """VegaLiteView emits a GeoDataFrame as a FeatureCollection with the
-    format.property geoshape needs, rather than an unserializable frame."""
+def _geo_pipeline():
     gdf = gpd.GeoDataFrame(
-        {'pop': [1, 2],
+        {'name': ['a', 'b'], 'pop': [1, 2],
          'date': [pd.Timestamp('2026-06-15'), pd.Timestamp('2026-06-15')],
          'geometry': [
              Polygon([(0, 0), (1, 0), (1, 1)]), Polygon([(2, 0), (3, 0), (3, 1)])]},
         crs='EPSG:4326',
     )
-    pipeline = Pipeline(source=InMemorySource(tables={'geo': gdf}), table='geo')
+    return Pipeline(source=InMemorySource(tables={'geo': gdf}), table='geo')
+
+
+def _serialize(view):
+    return Serializer().encode(view.get_panel().get_root())
+
+
+def test_hvplot_view_sizes_points_by_a_column():
+    view = _points_view(size="lat")
+    size = view.get_plot(view.get_data()).opts.get().kwargs["size"]
+    assert size.dimension.name == "lat"
+    # Scaled, so a column of large numbers still gives markers a few pixels wide
+    assert size.apply(Dataset(view.get_data())).max() == 24
+
+
+def test_hvplot_view_gives_a_constant_size_column_one_size():
+    from lumen.sources.base import InMemorySource
+    df = pd.DataFrame({"lon": [13.4, 2.3], "lat": [52.5, 48.9], "n": [7, 7]})
+    pipeline = Pipeline(source=InMemorySource(tables={"pts": df}), table="pts")
+    view = hvPlotView(pipeline=pipeline, kind="points", x="lon", y="lat", size="n")
+    # hvPlot's size is the square root of the area s=12 asked for
+    assert view.get_plot(view.get_data()).opts.get().kwargs["size"] == pytest.approx(12 ** 0.5)
+
+
+@requires_geopandas
+@pytest.mark.parametrize("version", ["2.2.0", "2.0.7"])
+def test_geometry_to_geojson_winds_clockwise_only_when_asked(monkeypatch, version):
+    import shapely
+
+    from lumen.util import geometry_to_geojson
+    ccw = Polygon([(0, 0), (1, 0), (1, 1)])
+    gdf = gpd.GeoDataFrame({"geometry": [ccw]}, crs="EPSG:4326")
+    monkeypatch.setattr(shapely, "__version__", version)
+    if version == "2.0.7":
+        monkeypatch.delattr(shapely, "orient_polygons", raising=False)
+
+    def ring(frame, **kw):
+        coords = geometry_to_geojson(frame, **kw)["features"][0]["geometry"]["coordinates"][0]
+        return shapely.geometry.LinearRing(coords)
+
+    assert ring(gdf).is_ccw and not ring(gdf, clockwise=True).is_ccw
+
+
+def test_hvplot_view_colours_points_by_z():
+    view = _points_view(z="lat")
+    plot = view.get_plot(view.get_data())
+    assert plot.opts.get().kwargs['color'] == 'lat'
+
+
+@requires_geopandas
+def test_hvplot_view_colours_geometry_by_z():
+    view = hvPlotView(pipeline=_geo_pipeline(), z='pop')
+    plot = view.get_plot(view.get_data())
+    assert plot.opts.get().kwargs['color'].dimension.name == 'pop'
+
+
+@requires_geopandas
+def test_vegalite_view_geometry_as_geoshape_data():
+    """VegaLiteView hands a GeoDataFrame to the Vega pane as a list of GeoJSON
+    features, the one geometry form the pane passes through untouched."""
     spec = {'mark': 'geoshape',
             'encoding': {'color': {'field': 'properties.pop', 'type': 'quantitative'}}}
-    data = VegaLiteView(pipeline=pipeline, spec=spec)._get_params()['object']['data']
+    view = VegaLiteView(pipeline=_geo_pipeline(), spec=spec)
+    obj = view._get_params()['object']
 
-    assert data['format'] == {'type': 'json', 'property': 'features'}
-    assert data['values']['type'] == 'FeatureCollection'
-    assert len(data['values']['features']) == 2
-    assert data['values']['features'][0]['properties']['pop'] == 1
-    json.dumps(data)  # must be serializable
+    assert obj['data'] == {'name': 'geo'}
+    assert len(obj['datasets']['geo']) == 2
+    assert obj['datasets']['geo'][0]['properties']['pop'] == 1
+    # Clockwise, or Vega fills everything outside the polygon
+    ring = obj['datasets']['geo'][0]['geometry']['coordinates'][0]
+    assert sum((x2 - x1) * (y2 + y1) for (x1, y1), (x2, y2) in itertools.pairwise(ring)) > 0
+    json.dumps(obj['datasets'])
+    _serialize(view)
+
+
+@requires_geopandas
+def test_vegalite_view_geometry_joined_to_external_boundaries():
+    """A spec that brings its own boundaries receives the table without its
+    shapely geometry column, which Bokeh cannot send to the browser."""
+    spec = {
+        'data': {'url': 'https://example.com/boundaries.json',
+                 'format': {'type': 'topojson', 'feature': 'regions'}},
+        'transform': [{'lookup': 'properties.name',
+                       'from': {'data': {'name': 'geo'}, 'key': 'name', 'fields': ['pop']}}],
+        'mark': 'geoshape',
+        'encoding': {'color': {'field': 'pop', 'type': 'quantitative'}},
+    }
+    view = VegaLiteView(pipeline=_geo_pipeline(), spec=spec)
+    dataset = view._get_params()['object']['datasets']['geo']
+
+    assert dataset['geometry'].tolist() == ['POLYGON ((0 0, 1 0, 1 1, 0 0))', 'POLYGON ((2 0, 3 0, 3 1, 2 0))']
+    _serialize(view)
 
 
 @requires_geopandas
@@ -648,6 +936,27 @@ def test_vegalite_view_plain_frame_unchanged():
 
     assert 'format' not in data
     assert data['values'].equals(df)
+
+
+def test_vegalite_view_escapes_dotted_column_fields():
+    df = pd.DataFrame({'date': [1, 2], 'nino3.4_anom': [0.5, 1.5]})
+    pipeline = Pipeline(source=InMemorySource(tables={'nino': df}), table='nino')
+    spec = {'transform': [{'fold': ['nino3.4_anom'], 'as': ['region', 'anomaly']}], 'layer': [{
+        'mark': 'line',
+        'encoding': {
+            'x': {'field': 'date'},
+            'y': {'field': 'nino3.4_anom'},
+            'tooltip': [{'field': 'nino3.4_anom'}, {'field': 'not.a.column'}],
+        },
+    }]}
+    view = VegaLiteView(pipeline=pipeline, spec=spec)
+    encoding = view._get_params()['object']['layer'][0]['encoding']
+
+    assert encoding['x']['field'] == 'date'
+    assert encoding['y']['field'] == 'nino3\\.4_anom'
+    assert encoding['tooltip'] == [{'field': 'nino3\\.4_anom'}, {'field': 'not.a.column'}]
+    assert view.spec['layer'][0]['encoding']['y']['field'] == 'nino3.4_anom'
+    assert view._get_params()['object']['transform'][0]['fold'] == ['nino3\\.4_anom']
 
 
 @requires_geopandas
@@ -732,3 +1041,37 @@ def test_vega_point_map_layers_get_the_table(set_root):
 
     assert final_spec["data"] == {"name": "test"}
     assert "test" in final_spec["datasets"]
+
+
+def _points_view(**params):
+    from lumen.sources.base import InMemorySource
+    from lumen.views.base import hvPlotView
+    df = pd.DataFrame({"lon": [13.4, 2.3], "lat": [52.5, 48.9]})
+    pipeline = Pipeline(source=InMemorySource(tables={"pts": df}), table="pts")
+    return hvPlotView(pipeline=pipeline, kind="points", x="lon", y="lat", **params)
+
+
+def test_hvplot_view_draws_tiles_under_a_geo_plot():
+    pytest.importorskip("geoviews")
+    plot = _points_view(geo=True, tiles="OSM").get_plot(_points_view().get_data())
+    assert any("Tiles" in type(el).__name__ or "WMTS" in type(el).__name__ for el in plot)
+    # geo reaches hvPlot, so the points are projected geoviews points, not plain ones
+    points = [el for el in plot if type(el).__name__ == "Points"]
+    assert points and type(points[0]).__module__.startswith("geoviews")
+
+
+@pytest.mark.parametrize("tiles", ["true", "True"])
+def test_hvplot_view_reads_tiles_given_as_a_string(tiles):
+    pytest.importorskip("geoviews")
+    plot = _points_view(geo=True, tiles=tiles).get_plot(_points_view().get_data())
+    assert any("Tiles" in type(el).__name__ or "WMTS" in type(el).__name__ for el in plot)
+
+
+def test_hvplot_view_without_geoviews_draws_plain_axes(monkeypatch, caplog):
+    import importlib.util
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name, *a: None if name == "geoviews" else real(name, *a))
+    view = _points_view(geo=True, tiles="OSM", coastline=True)
+    plot = view.get_plot(view.get_data())
+    assert type(plot).__name__ == "Points"
+    assert "needs geoviews" in caplog.text

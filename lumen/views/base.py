@@ -4,16 +4,21 @@ object.
 """
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import copy
 import html
+import importlib.util
+import re
 import sys
 import warnings
 
+from contextlib import contextmanager
 from io import BytesIO, StringIO
 from typing import (
     IO, TYPE_CHECKING, Any, ClassVar, Literal,
 )
-from weakref import WeakKeyDictionary
+from weakref import WeakKeyDictionary, WeakSet
 
 import hvplot.pandas  # type: ignore  # noqa: F401
 import numpy as np
@@ -22,7 +27,7 @@ import panel as pn
 import param  # type: ignore
 
 from bokeh.models import NumeralTickFormatter  # type: ignore
-from holoviews import Overlay  # type: ignore
+from holoviews import Overlay, dim  # type: ignore
 from holoviews.core import (  # type: ignore
     Dataset, Dimension, DynamicMap, Element, NdMapping, ViewableTree,
 )
@@ -33,9 +38,9 @@ from holoviews.plotting.util import process_cmap  # type: ignore
 from holoviews.selection import link_selections  # type: ignore
 from holoviews.streams import Pipe  # type: ignore
 from hvplot import hvPlotTabular  # type: ignore
+from hvplot.converter import HoloViewsConverter  # type: ignore
 from hvplot.ui import (  # type: ignore
-    Colormapping, Geographic, Operations, hvDataFrameExplorer, hvGridExplorer,
-    hvPlotExplorer,
+    Controls, hvDataFrameExplorer, hvGridExplorer, hvPlotExplorer,
 )
 from panel.io.document import immediate_dispatch
 from panel.pane.base import PaneBase
@@ -44,6 +49,7 @@ from panel.pane.perspective import (
     THEMES as _PERSPECTIVE_THEMES, Plugin as _PerspectivePlugin,
 )
 from panel.param import Param
+from panel.theme import DarkTheme
 from panel.util import classproperty
 from panel.viewable import Child, Viewable, Viewer
 from panel_material_ui import FileDownload
@@ -60,7 +66,7 @@ from ..transforms.base import Transform
 from ..transforms.sql import SQLLimit, SQLTransform
 from ..util import (
     VARIABLE_RE, as_pandas, catch_and_notify, geometry_to_geojson,
-    geometry_to_wkt, is_geodataframe, is_ref, resolve_module_reference,
+    geometry_to_wkt, is_geodataframe, is_ref, log, resolve_module_reference,
     try_import_xarray, widen_nullable,
 )
 from ..validation import ValidationError
@@ -119,6 +125,40 @@ BAR_KINDS = ("bar", "barh")
 # nothing here: a frame past MAX_RENDER_ROWS is refused, and one past 20k is
 # datashaded into an image server-side long before WebGL would earn its keep.
 CANVAS_BACKEND = {"plot.output_backend": "canvas"}
+
+# Every keyword hvPlot itself documents, by group (axes, colour, geo, ...)
+_HVPLOT_OPTIONS = {
+    option for name, group in vars(HoloViewsConverter).items()
+    if name.endswith('_options') and isinstance(group, list) for option in group
+}
+
+
+_FORCE_LIGHT_THEME = contextvars.ContextVar(
+    'lumen_force_light_theme', default=False
+)
+
+_VEGA_THEME_VIEWS: WeakSet = WeakSet()
+
+
+@contextmanager
+def _force_light_theme():
+    """Render Vega-Lite charts light, whatever the dashboard theme, since an
+    exported chart has no surrounding page to contrast with."""
+    token = _FORCE_LIGHT_THEME.set(True)
+    try:
+        yield
+    finally:
+        _FORCE_LIGHT_THEME.reset(token)
+
+
+def _theme_views_changed(*events: param.parameterized.Event) -> None:
+    # A single watcher on the global config avoids pinning every VegaLiteView
+    # (and its pipeline and data) in memory for the life of the process.
+    for view in list(_VEGA_THEME_VIEWS):
+        view._on_theme_change(*events)
+
+
+pn.config.param.watch(_theme_views_changed, '_theme')
 
 
 class View(MultiTypeComponent, Viewer):
@@ -998,6 +1038,14 @@ class hvPlotBaseView(View):
 
     by = param.ListSelector(doc="The column(s) to facet the plot by.")
 
+    cmap = param.ClassSelector(default=None, class_=(str, list, dict), doc="""
+        Colorcet colormap for a continuous colour: 'kbc_r' for a magnitude
+        such as a count or a rainfall total, 'fire' for heat or intensity,
+        'coolwarm' for a signed value centred on zero such as an anomaly or a
+        change, 'colorwheel' for a cyclic one such as a wind direction or an
+        hour of day. Leave unset for hvPlot's default. A list of colours
+        or a {category: colour} mapping is passed to hvPlot as it is.""")
+
     color_key = param.Dict(default=None, doc="""
         Mapping of the values in `by` to explicit colors, e.g.
         {'Irish': '#e41a1c', 'Italian': '#377eb8'}. Only meaningful with
@@ -1015,12 +1063,18 @@ class hvPlotBaseView(View):
     groupby = param.ListSelector(doc="The column(s) to group by.")
 
     z = param.Selector(doc="""
-        Column of z-values for gridded plot kinds (image, quadmesh, heatmap, contourf).
-        Internally mapped to hvPlot's C= for kind='heatmap' and z= for other kinds.""")
+        Column of z-values for gridded plot kinds (image, quadmesh, heatmap, contourf),
+        or the column points and map shapes are coloured by. Internally mapped to
+        hvPlot's C= for kind='heatmap', c= for points and geometry and z= for other
+        kinds.""")
 
     geo = param.Boolean(
         default=False, doc="Toggle True if the plot is on a geographic map."
     )
+
+    tiles = param.Parameter(default=None, doc="""
+        Basemap tiles under a geographic plot (geo=True), e.g. True or
+        'OSM'. Needs geoviews; without it the plot has no basemap.""")
 
     _field_params = ['x', 'y', 'by', 'groupby', 'z']
 
@@ -1167,14 +1221,24 @@ class hvPlotUIView(hvPlotBaseView):
             explorer_cls = hvPlotExplorer
         if data is None:
             data = self.get_data()
-        # The explorer keeps colormapping and datashading on nested controls, so
-        # a param is only forwarded if one of them claims it; anything else is
-        # rejected by hvPlotExplorer.__init__.
-        controls = (explorer_cls.param, Geographic.param, Colormapping.param, Operations.param)
+        # The explorer keeps most options on nested controls (axes, colormapping,
+        # geographic, ...), so a param is only forwarded if one of them claims
+        # it; anything else is rejected by hvPlotExplorer.__init__.
+        controls = (explorer_cls.param, *(
+            p.class_.param for p in explorer_cls.param.objects().values()
+            if isinstance(p, param.ClassSelector) and issubclass(p.class_, Controls)
+        ))
         params = {
             k: v for k, v in self.param.values().items()
             if any(k in control for control in controls)
             and v is not None and k != 'name'
+        }
+        # hvPlot options such as grid or frame_height have no explorer control
+        # either; dropped, so a plot spec opens in the explorer as it is. A
+        # keyword hvPlot does not know is kept, so a typo still raises.
+        kwargs = {
+            k: v for k, v in self.kwargs.items()
+            if any(k in control for control in controls) or k not in _HVPLOT_OPTIONS
         }
         # Only completed once a control has claimed it above: hvPlot gained the
         # color_key control after this was written, and forcing the keyword in
@@ -1182,13 +1246,21 @@ class hvPlotUIView(hvPlotBaseView):
         # older hvPlot rather than simply coloring from the default palette.
         if 'color_key' in params:
             params['color_key'] = self._complete_color_key(data)
-        self._check_aggregator(self.kwargs)
-        return (data,), dict(params, **self.kwargs)
+        self._check_aggregator(kwargs)
+        return (data,), dict(params, **kwargs)
+
+    def _explored_dataset(self):
+        """The gridded Dataset to explore, narrowed to `z` when it names one of
+        its variables; otherwise the explorer opens on whichever comes first."""
+        gridded = self._source_dataset()
+        if gridded is not None and self.z in gridded.data_vars:
+            return gridded[[self.z]]
+        return gridded
 
     def __panel__(self):
         panel = self.get_panel()
         def ui(*events):
-            gridded = self._source_dataset()
+            gridded = self._explored_dataset()
             panel._data = gridded if gridded is not None else self.get_data()
             panel._plot()
             return panel
@@ -1198,7 +1270,7 @@ class hvPlotUIView(hvPlotBaseView):
         # An xarray-backed pipeline explores the compact gridded Dataset (via
         # to_dataset) with hvPlot's grid explorer, so gridded kinds like image
         # and quadmesh work; tabular data uses the dataframe explorer.
-        gridded = self._source_dataset()
+        gridded = self._explored_dataset()
         if gridded is not None:
             # Deferred: registers hvPlot's xarray accessor, and xarray is optional.
             import hvplot.xarray  # type: ignore  # noqa: F401
@@ -1229,7 +1301,13 @@ class hvPlotView(hvPlotBaseView):
         A selection expression caputirng the current selection applied
         on the plot.""")
 
+    size = param.Selector(doc="""
+        Column that sizes points, e.g. the population of each place.
+        Scaled to 4 to 24 pixels.""")
+
     view_type = 'hvplot'
+
+    _field_params = hvPlotBaseView._field_params + ['size']
 
     _ignore_kwargs = ['tables']
 
@@ -1325,6 +1403,7 @@ class hvPlotView(hvPlotBaseView):
         x = self.x if keep(self.x) else None
         y = self.y if keep(self.y) else None
         z = self.z if keep(self.z) else None
+        size = self.size if keep(self.size) else None
         by = [column for column in self.by or [] if keep(column)]
         groupby = [column for column in self.groupby or [] if keep(column)]
         processed = {}
@@ -1336,8 +1415,14 @@ class hvPlotView(hvPlotBaseView):
             processed[k] = v
         if self.streaming:
             processed['stream'] = self._data_stream
+        if size is not None:
+            # Raw values, e.g. a population, would be sizes in pixels. A
+            # constant column has no range to scale over, so it gets one size.
+            constant = isinstance(df, pd.DataFrame) and df[size].nunique() <= 1
+            processed['s'] = 12 if constant else dim(size).norm() * 20 + 4
         if z is not None:
-            processed['C' if self.kind == 'heatmap' else 'z'] = z
+            # heatmap takes it as C, points are coloured by c
+            processed[{'heatmap': 'C', 'points': 'c', 'scatter': 'c'}.get(self.kind, 'z')] = z
         # Params are stripped out of kwargs by View.__init__, so anything hvPlot
         # needs has to be put back explicitly.
         if self.datashade:
@@ -1346,18 +1431,35 @@ class hvPlotView(hvPlotBaseView):
             processed['dynspread'] = True
         if self.color_key is not None:
             processed['color_key'] = self._complete_color_key(df)
+        if self.cmap is not None:
+            processed['cmap'] = self.cmap
         if self.aggregator is not None:
             self._check_aggregator(processed)
             processed['aggregator'] = self.aggregator
 
         kind = self.kind
         plot_source = df
+        if self.geo:
+            # geo=True and tiles need geoviews; without it hvPlot raises, so
+            # draw the plot on plain axes rather than not at all
+            if importlib.util.find_spec('geoviews') is not None:
+                processed['geo'] = True
+                tiles = self.tiles
+                # A spec written as JSON can carry the flag as a string
+                if isinstance(tiles, str) and tiles.lower() in ('true', 'false'):
+                    tiles = tiles.lower() == 'true'
+                if tiles:
+                    processed['tiles'] = tiles
+            else:
+                log.warning("geo=True needs geoviews; drawing %s without a map projection or tiles.", self.name)
+                processed.pop('coastline', None)
         if is_geodataframe(df):
             # hvplot infers the geometry kind (polygons/paths/points); just
             # clear a non-geometry default so it isn't forced to scatter/points
             if kind in (None, 'scatter', 'points'):
                 kind = None
-            processed['geo'] = self.geo
+            if 'z' in processed:
+                processed['c'] = processed.pop('z')
         elif kind in GRIDDED_KINDS:
             plot_source = self._gridded_plot_source(df)
         elif kind in BAR_KINDS and x is not None:
@@ -1624,9 +1726,59 @@ class VegaLiteView(View):
 
     spec = param.Dict()
 
+    theme = param.Selector(
+        default='auto',
+        objects=['auto', 'light', 'dark'] + [
+            name for name in pn.pane.Vega.param.theme.objects
+            if name not in ('light', 'dark')
+        ], doc="""
+        The theme to render the chart with. Defaults to 'auto', which follows
+        the active Panel theme so the chart adapts to light and dark dashboards
+        without baking colors into the exported specification. 'light' uses the
+        Vega default theme, 'dark' the Vega dark theme, and any other value is
+        passed through to the Vega pane as a named Vega theme.""")
+
     view_type = 'vegalite'
 
     _extension = 'vega'
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        self._doc = pn.state.curdoc
+        self._theme_update_scheduled = False
+        _VEGA_THEME_VIEWS.add(self)
+
+    def __panel__(self):
+        # A View built outside the session learns its document on render.
+        if self._doc is None:
+            self._doc = pn.state.curdoc
+        return super().__panel__()
+
+    def _on_theme_change(self, *events: param.parameterized.Event) -> None:
+        if self.theme != 'auto' or not self._initialized:
+            return
+        curdoc = pn.state.curdoc
+        if curdoc is not self._doc:
+            # pn.config watchers fire for every session.
+            return
+        if self._theme_update_scheduled:
+            return
+        self._theme_update_scheduled = True
+        if curdoc is not None:
+            # Panel validates config.theme by setting and restoring _theme, so
+            # watchers fire before the new value lands. Defer to read it.
+            pn.state.execute(self._apply_theme_change, schedule=True)
+            return
+        try:
+            # A notebook has no session but runs an event loop.
+            asyncio.get_running_loop().call_soon(self._apply_theme_change)
+        except RuntimeError:
+            self._apply_theme_change()
+
+    def _apply_theme_change(self) -> None:
+        self._theme_update_scheduled = False
+        if self.theme == 'auto' and self._initialized:
+            self.update(invalidate_cache=False)
 
     @classmethod
     def _declares_own_data(cls, node: Any) -> bool:
@@ -1678,6 +1830,27 @@ class VegaLiteView(View):
 
         for value in node.values():
             cls._retarget_lookup_datasets(value, known, table)
+
+    @classmethod
+    def _drop_dangling_view_data(cls, node: Any, known: set[str]) -> None:
+        """
+        Drop, in place, data on a layer or concatenated view that only names a
+        dataset nobody registered, so the view inherits the table's data.
+
+        A model sometimes gives the table a name of its own on a layer, e.g.
+        ``{"name": "avg_mass_by_species"}``. Vega-Lite accepts it and then
+        draws an empty chart with no error.
+        """
+        if not isinstance(node, dict):
+            return
+        for key in ("layer", "concat", "hconcat", "vconcat"):
+            for view in node.get(key) or []:
+                if not isinstance(view, dict):
+                    continue
+                data = view.get("data")
+                if isinstance(data, dict) and data.keys() <= {"name", "format"} and data.get("name") not in known:
+                    del view["data"]
+                cls._drop_dangling_view_data(view, known)
 
     def _coerce_temporal(self, spec: Any, df: pd.DataFrame) -> Any:
         """
@@ -1741,6 +1914,53 @@ class VegaLiteView(View):
 
         return spec
 
+    @classmethod
+    def _escape_field_names(cls, spec: Any, columns: set[str]) -> Any:
+        """
+        Escape dots and brackets in fields that name a column, since Vega-Lite
+        otherwise reads "nino3.4_anom" as the nested path nino3 -> 4_anom.
+        """
+        if isinstance(spec, list):
+            return [cls._escape_field_names(item, columns) for item in spec]
+        if not isinstance(spec, dict):
+            return spec
+        spec = {key: cls._escape_field_names(value, columns) for key, value in spec.items()}
+        for key, value in spec.items():
+            if key == "field" and isinstance(value, str):
+                spec[key] = cls._escape_field(value, columns)
+            elif key in ("fold", "groupby", "fields") and isinstance(value, list):
+                spec[key] = [cls._escape_field(item, columns) for item in value]
+        return spec
+
+    @staticmethod
+    def _escape_field(field: Any, columns: set[str]) -> Any:
+        if isinstance(field, str) and field in columns:
+            return re.sub(r"([.\[\]])", r"\\\1", field)
+        return field
+
+    @staticmethod
+    def _detect_theme() -> str:
+        # A served dashboard sets its theme on the template, not on pn.config.
+        if pn.config.theme == 'dark':
+            return 'dark'
+        curdoc = pn.state.curdoc
+        template = pn.state._templates.get(curdoc) if curdoc else pn.state._template
+        return 'dark' if template and issubclass(template.theme, DarkTheme) else 'light'
+
+    def _pane_theme(self) -> str | None:
+        theme = self._detect_theme() if self.theme == 'auto' else self.theme
+        return None if theme == 'light' else theme
+
+    @staticmethod
+    def _apply_text_default(spec: dict, theme: str | None) -> dict:
+        """Vega's dark theme leaves text marks black, so default them to white
+        at render time, keeping the color out of the spec and its exports."""
+        config = spec.get('config') or {}
+        text = config.get('text') or {}
+        if theme != 'dark' or 'color' in text or 'fill' in text:
+            return spec
+        return dict(spec, config=dict(config, text=dict(text, color='#ffffff')))
+
     def _get_params(self) -> dict[str, Any]:
         df = self.get_data()
         spec_data = self.spec.get('data', {})
@@ -1750,6 +1970,7 @@ class VegaLiteView(View):
             spec["$schema"] = "https://vega.github.io/schema/vega-lite/v5.json"
 
         spec = self._coerce_temporal(spec, df)
+        spec = self._escape_field_names(spec, set(df.columns))
 
         if self._declares_own_data(spec):
             # The spec brings its own data (e.g. map boundaries), so the pipeline
@@ -1758,28 +1979,39 @@ class VegaLiteView(View):
             # Copied rather than mutated in place: self.spec is reused across
             # renders, and growing its datasets dict would leak frames.
             datasets = dict(self.spec.get('datasets', {}))
-            datasets[self.pipeline.table] = df
+            datasets[self.pipeline.table] = geometry_to_wkt(df)
             spec = copy.deepcopy({k: v for k, v in spec.items() if k != 'datasets'})
             # A lat/lon map's basemap layer brings its own url, but the point layers
             # beside it carry no data and would draw nothing without the table.
             if 'data' not in spec and any('data' not in layer for layer in spec.get('layer', [])):
                 spec['data'] = {'name': self.pipeline.table}
             self._retarget_lookup_datasets(spec, set(datasets), self.pipeline.table)
+            self._drop_dangling_view_data(spec, set(datasets))
             encoded = dict(spec, datasets=datasets)
         elif is_geodataframe(df):
-            # geoshape consumes a FeatureCollection, so fields then live under
-            # properties, e.g. {"field": "properties.value"}.
-            encoded = dict(spec, data={
-                'values': geometry_to_geojson(df),
-                'format': {'type': 'json', 'property': 'features'},
-                **spec_data,
-            })
+            # geoshape consumes GeoJSON features, so fields then live under
+            # properties, e.g. {"field": "properties.value"}. Panel's Vega pane
+            # passes a list of features through untouched, but would turn a
+            # FeatureCollection in data.values into columns.
+            name = spec_data.get('name', self.pipeline.table)
+            features = geometry_to_geojson(df, clockwise=True)['features']
+            datasets = dict(self.spec.get('datasets', {}), **{name: features})
+            encoded = dict(spec, datasets=datasets, data={**spec_data, 'name': name})
         else:
+            self._drop_dangling_view_data(spec, set(spec.get('datasets', {})))
             encoded = dict(spec, data={'values': df, **spec_data})
-        return dict(object=encoded, **self.kwargs)
-
+        # Always set the theme so switching back to light clears a dark theme
+        # left on a reused pane. Exports force the light theme regardless of
+        # the dashboard the chart is displayed in.
+        theme = None if _FORCE_LIGHT_THEME.get() else self._pane_theme()
+        encoded = self._apply_text_default(encoded, theme)
+        params = dict(object=encoded, **self.kwargs)
+        params['theme'] = theme
+        return params
 
     def get_panel(self) -> pn.pane.Vega:
+        if self._doc is None:
+            self._doc = pn.state.curdoc
         spec = self._normalize_params(self._get_params())
         return pn.pane.Vega(**spec)
 

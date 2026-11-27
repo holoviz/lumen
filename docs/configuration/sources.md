@@ -23,11 +23,43 @@ ui = lmai.ExplorerUI(data=['penguins.csv', 'earthquakes.parquet'])
 ui.servable()
 ```
 
+### In-memory data
+
+`ExplorerUI` and `lumen.read` also take data you already have in Python. A dict key names the table.
+
+``` py title="DataFrames and datasets"
+import hvsampledata
+import lumen
+import lumen.ai as lmai
+
+df = hvsampledata.penguins("pandas")
+source = lumen.read({"penguins": df})  # (1)!
+source.get("penguins")
+
+ui = lmai.ExplorerUI(data=[
+    lumen.read({
+        "penguins": df,
+        "states": hvsampledata.us_states("geopandas"),  # a GeoDataFrame
+    }),
+    hvsampledata.air_temperature("xarray"),  # an xarray Dataset, kept apart as a grid (2)
+])
+```
+
+1. `lumen.read` returns one Source. It accepts pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray Datasets and DataArrays, DuckDB connections and relations, plus the paths and URLs above.
+2. Xarray data in the same dict as other tables is joined into DuckDB, which loses the gridded source that `answer.ds` and the gridded tools rely on. Passing it as its own list item keeps it a gridded source.
+
+### Ask from a notebook
+
+A Source or Pipeline can answer questions directly with `source.ask(...)`, without the chat UI. See [Lumen in notebooks](../getting_started/lumen_in_notebooks.md).
+
+A dict passed to `lumen.read` can mix DataFrames, files, Pipelines, xarray data and a DuckDB connection; they become named tables of one source, so a question can join them. xarray data is read lazily (joined this way it loses its gridded source, see note 2 above), and a connection's tables are copied in so your database is never written to.
+
 ## Supported sources
 
 | Source | Use for |
 |--------|---------|
 | Files | CSV, TSV, Parquet, JSON, JSONL and NDJSON (local or URL); Excel and HTML tables when uploaded in the UI |
+| In-memory data | pandas, polars and GeoPandas DataFrames, pyarrow Tables, xarray objects, DuckDB connections |
 | DuckDB | Local SQL queries on files |
 | xarray | N-dimensional scientific data (NetCDF, Zarr, HDF5, GRIB) |
 | Geospatial files | GeoJSON, WKT and zipped shapefiles |
@@ -199,10 +231,13 @@ ui = lmai.ExplorerUI(data=source)
 ui.servable()
 ```
 
-Each data variable in the dataset becomes a separate SQL table with coordinate columns:
+Each data variable in the dataset becomes a separate SQL table with coordinate columns. To try it without a file, read the sample air temperature grid:
 
 ``` py title="Direct SQL queries"
-source = XArraySQLSource(uri='air_temperature.nc')
+import hvsampledata
+import lumen
+
+source = lumen.read({"air": hvsampledata.air_temperature("xarray")})
 source.get_tables()  # ['air']
 
 df = source.execute(

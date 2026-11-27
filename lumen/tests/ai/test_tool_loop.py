@@ -415,6 +415,65 @@ async def test_responses_api_answers_pending_calls_before_the_structured_call(lo
     assert [item["call_id"] for item in outputs] == ["call_2"]
 
 
+async def test_stateless_responses_api_resends_the_conversation(lookup, monkeypatch):
+    llm = OpenAI(api="responses", stateless_responses=True, model_kwargs={"default": {"model": "gpt-test"}})
+
+    def call(i):
+        return SimpleNamespace(
+            id=f"resp_{i}",
+            output=[
+                SimpleNamespace(type="reasoning", id=f"rs_{i}", summary=[]),
+                SimpleNamespace(type="function_call", call_id=f"call_{i}", name="lookup", arguments=f'{{"key": "{i}"}}'),
+            ],
+        )
+
+    done = SimpleNamespace(id="resp_2", output=[], output_text="Found it.")
+    script = Script(call(0), call(1), done, _final)
+    monkeypatch.setattr(llm, "run_client", script)
+
+    result = await llm.invoke([{"role": "user", "content": "hi"}], response_model=Answer, tools=[lookup])
+
+    assert result == Answer(value=1)
+    assert all("previous_response_id" not in kwargs for _, kwargs in script.requests)
+    final_inputs = script.requests[-1][0]
+    assert final_inputs[0] == {"role": "user", "content": "hi"}
+    assert [(item.get("type"), item.get("call_id") or item.get("id")) for item in final_inputs[1:]] == [
+        ("reasoning", "rs_0"), ("function_call", "call_0"), ("function_call_output", "call_0"),
+        ("reasoning", "rs_1"), ("function_call", "call_1"), ("function_call_output", "call_1"),
+    ]
+
+
+async def test_stateless_responses_stream_resends_the_conversation(lookup, calls, monkeypatch):
+    llm = OpenAI(api="responses", stateless_responses=True, model_kwargs={"default": {"model": "gpt-test"}})
+    requests = []
+
+    async def tool_call_events():
+        yield SimpleNamespace(type="response.output_item.added", output_index=0,
+                              item=SimpleNamespace(type="function_call", call_id="call_1", name="lookup"))
+        yield SimpleNamespace(type="response.function_call_arguments.done", output_index=0,
+                              name="lookup", arguments='{"key": "a"}')
+
+    async def text_events():
+        yield SimpleNamespace(type="response.output_text.delta", delta="done")
+
+    async def run_client(model_spec, messages, **kwargs):
+        requests.append((list(messages), kwargs))
+        return tool_call_events() if len(requests) == 1 else text_events()
+
+    monkeypatch.setattr(llm, "run_client", run_client)
+
+    chunks = [chunk async for chunk in llm.stream([{"role": "user", "content": "hi"}], tools=[lookup])]
+
+    assert chunks[-1] == "done"
+    assert calls == [("a", 5)]
+    inputs, kwargs = requests[1]
+    assert "previous_response_id" not in kwargs
+    assert inputs[0] == {"role": "user", "content": "hi"}
+    assert inputs[1] == {"type": "function_call", "call_id": "call_1", "name": "lookup", "arguments": '{"key": "a"}'}
+    assert inputs[2]["type"] == "function_call_output"
+    assert inputs[2]["call_id"] == "call_1"
+
+
 def _stream_chunks(tool_call=None, text=""):
     async def gen():
         if tool_call:
@@ -444,3 +503,40 @@ async def test_stream_tool_recursion_is_capped(llm, lookup, calls, monkeypatch):
     assert len(requests) == 4
     assert "Tool budget exhausted" in requests[2][-1]["content"]
     assert requests[3][-1]["content"].startswith("Not run")
+
+
+async def test_reasoning_is_sent_back_with_tool_calls(llm, lookup, monkeypatch):
+    """Reasoning models (e.g. behind Kilo's free tier) reject a follow-up whose
+    assistant tool-call message omits the reasoning they returned with it."""
+    first = _response(("lookup", {"key": "a"}))
+    first.choices[0].message.reasoning = "Need the lookup first."
+    first.choices[0].message.reasoning_details = [{"type": "reasoning.text", "text": "Need the lookup first."}]
+    script = Script(first, _response(content="done"))
+    monkeypatch.setattr(llm, "run_client", script)
+
+    await llm.invoke([{"role": "user", "content": "hi"}], tools=[lookup])
+
+    assistant = next(m for m in script.requests[1][0] if m.get("role") == "assistant")
+    assert assistant["reasoning"] == "Need the lookup first."
+    assert assistant["reasoning_details"][0]["text"] == "Need the lookup first."
+
+
+async def test_stream_reasoning_is_sent_back_with_tool_calls(llm, lookup, monkeypatch):
+    requests = []
+    call = {"index": 0, "id": "call_1", "type": "function", "function": {"name": "lookup", "arguments": '{"key": "a"}'}}
+
+    async def first():
+        for piece in ("Need the ", "lookup first."):
+            yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="", tool_calls=None, reasoning=piece))])
+        yield SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="", tool_calls=[call]))])
+
+    async def run_client(model_spec, messages, **kwargs):
+        requests.append(messages)
+        return first() if len(requests) == 1 else _stream_chunks(text="done")
+
+    monkeypatch.setattr(llm, "run_client", run_client)
+    async for _ in llm.stream([{"role": "user", "content": "hi"}], tools=[lookup]):
+        pass
+
+    assistant = next(m for m in requests[1] if m.get("role") == "assistant")
+    assert assistant["reasoning"] == "Need the lookup first."

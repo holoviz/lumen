@@ -12,7 +12,7 @@ from ..context import TContext
 from ..llm import Message
 from ..report import ActorTask
 from ..tools import Tool
-from ..utils import log_debug
+from ..utils import log_debug, normalized_name
 from .base import Coordinator, Plan
 
 if TYPE_CHECKING:
@@ -69,7 +69,7 @@ class DependencyResolver(Coordinator):
         applies = await asyncio.gather(*[tool.applies(context) for tool in self._tools["main"]])
         tools = [tool for tool, tapply in zip(self._tools["main"], applies, strict=False) if tapply]
 
-        agent_names = tuple(sagent.name[:-5] for sagent in agents) + tuple(tool.name for tool in tools)
+        agent_names = tuple(normalized_name(actor) for actor in [*agents, *tools])
         agent_model = self._get_model("main", agent_names=agent_names, primary=primary)
         if len(agent_names) == 0:
             raise ValueError("No agents available to choose from.")
@@ -89,7 +89,7 @@ class DependencyResolver(Coordinator):
                 try:
                     output = await self._choose_agent(messages, context, self.agents, primary=True)
                 except Exception as e:
-                    if self.interface.callback_exception not in ("raise", "verbose"):
+                    if self.interface is not None and self.interface.callback_exception not in ("raise", "verbose"):
                         step.failed_title = "Failed to select main agent..."
                         step.stream(str(e), replace=True)
                     else:

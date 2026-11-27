@@ -1,5 +1,5 @@
-import asyncio
 import datetime as dt
+import json
 import os
 import tempfile
 
@@ -8,7 +8,9 @@ from unittest.mock import patch
 
 import pandas as pd
 import pytest
+import yaml
 
+from lumen.pipeline import Pipeline
 from lumen.tests.utils import Polygon, gpd
 from lumen.transforms.sql import SQLGroupBy
 
@@ -273,6 +275,96 @@ def test_duckdb_source_ephemeral_roundtrips(duckdb_memory_source, mixed_df):
 def test_duckdb_source_mirrors_source(duckdb_source):
     mirrored = DuckDBSource(uri=':memory:', mirrors={'mixed': (duckdb_source, 'test_sql')})
     pd.testing.assert_frame_equal(duckdb_source.get('test_sql'), mirrored.get('mixed'), check_dtype=False)
+
+
+def test_duckdb_get_metadata_applies_user_descriptions():
+    source = DuckDBSource.from_df(tables={'cells': pd.DataFrame({'area': [1.0], 'label': ['a']})})
+    source.metadata = {'cells': {
+        'description': 'One row per cell',
+        'columns': {
+            'area': {'description': 'Area in um^2'},
+            'label': 'Cell label',
+            'missing': {'description': 'Not a column of the table'},
+        },
+    }}
+    meta = source.get_metadata('cells')
+    assert meta['description'] == 'One row per cell'
+    assert meta['columns']['area'] == {'data_type': 'float64', 'description': 'Area in um^2'}
+    assert meta['columns']['label']['description'] == 'Cell label'
+    assert 'missing' not in meta['columns']
+
+
+def test_duckdb_get_metadata_keeps_non_empty_generated_values():
+    source = DuckDBSource.from_df(
+        tables={'cells': pd.DataFrame({'area': [1.0]})},
+        metadata_func=lambda tables: {t: {
+            'description': 'Generated', 'columns': {'area': {'description': 'Generated area'}}
+        } for t in tables},
+    )
+    source.metadata = {'cells': {
+        'description': 'User', 'columns': {'area': {'description': 'User area', 'unit': 'um^2'}},
+    }}
+    meta = source.get_metadata('cells')
+    assert meta['description'] == 'Generated'
+    assert meta['columns']['area'] == {'description': 'Generated area', 'unit': 'um^2'}
+
+
+def test_duckdb_get_metadata_fills_empty_generated_columns():
+    source = DuckDBSource.from_df(
+        tables={'cells': pd.DataFrame({'area': [1.0], 'label': ['a'], 'count': [1]})},
+        metadata_func=lambda tables: {t: {
+            'description': None, 'columns': {'area': '', 'label': {}, 'count': None}
+        } for t in tables},
+    )
+    source.metadata = {'cells': {
+        'description': 'One row per cell',
+        'columns': {
+            'area': {'description': 'Area in um^2'},
+            'label': 'Cell label',
+            'count': {'description': 'Number of cells'},
+        },
+    }}
+    meta = source.get_metadata('cells')
+    assert meta['description'] == 'One row per cell'
+    assert meta['columns']['area'] == {'description': 'Area in um^2'}
+    assert meta['columns']['label'] == {'description': 'Cell label'}
+    assert meta['columns']['count'] == {'description': 'Number of cells'}
+
+
+def test_duckdb_get_metadata_normalizes_columns_without_generated_columns():
+    source = DuckDBSource.from_df(
+        tables={'cells': pd.DataFrame({'area': [1.0], 'label': ['a']})},
+        metadata_func=lambda tables: {t: {'description': 'Generated'} for t in tables},
+    )
+    user_area = {'description': 'Area in um^2'}
+    source.metadata = {'cells': {'columns': {'area': user_area, 'label': 'Cell label'}}}
+    meta = source.get_metadata('cells')
+    assert meta['description'] == 'Generated'
+    assert meta['columns'] == {
+        'area': {'description': 'Area in um^2'},
+        'label': {'description': 'Cell label'},
+    }
+    assert meta['columns']['area'] is not user_area
+
+
+def test_duckdb_get_metadata_applies_user_descriptions_to_multiple_tables():
+    source = DuckDBSource.from_df(tables={
+        'cells': pd.DataFrame({'area': [1.0]}),
+        'samples': pd.DataFrame({'name': ['a']}),
+        'plates': pd.DataFrame({'well': ['A1']}),
+    })
+    source.metadata = {
+        'cells': {'description': 'One row per cell', 'columns': {'area': 'Area in um^2'}},
+        'samples': {'description': 'One row per sample', 'columns': {'name': {'description': 'Sample name'}}},
+    }
+    meta = source.get_metadata(['cells', 'samples', 'plates'])
+    assert set(meta) == {'cells', 'samples', 'plates'}
+    assert meta['cells']['description'] == 'One row per cell'
+    assert meta['cells']['columns']['area'] == {'data_type': 'float64', 'description': 'Area in um^2'}
+    assert meta['samples']['description'] == 'One row per sample'
+    assert meta['samples']['columns']['name']['description'] == 'Sample name'
+    assert meta['plates']['description'] == ''
+    assert meta['plates']['columns']['well']['description'] == ''
 
 
 def test_joined_source_get_schema_merges_sql_tables():
@@ -1491,6 +1583,45 @@ def test_native_fetch_keeps_date_a_date(backend):
     assert [dt.date(d.year, d.month, d.day) for d in days] == list(expected)
 
 
+@pytest.mark.parametrize("backend", ["polars", "pyarrow"])
+def test_from_df_native_frame_keeps_dtypes(backend):
+    """A polars or Arrow frame goes in without a pandas detour."""
+    pytest.importorskip(backend)
+    import narwhals.stable.v2 as nw
+
+    data = {
+        'i': [1, 2, None], 'f': [0.5, None, 2.5], 's': ['a', None, 'c'],
+        'b': [True, False, None], 'd': [dt.date(2020, 1, d) for d in (1, 2, 3)],
+    }
+    frame = nw.from_dict(data, backend=backend)
+    source = DuckDBSource.from_df({'t': frame.to_native()})
+    source.dataframe_backend = backend
+
+    fetched = nw.from_native(source.fetch("SELECT * FROM t"))
+    assert fetched.collect_schema() == frame.collect_schema()
+    assert fetched.rows() == frame.rows()
+
+
+def test_from_spec_restores_frame_and_pipeline_mirrors():
+    base = DuckDBSource.from_df({'base': pd.DataFrame({'x': [1, 2, 3]})})
+    source = DuckDBSource(
+        uri=':memory:',
+        mirrors={'people': pd.DataFrame({'name': ['a', 'b']}), 'piped': Pipeline(source=base, table='base')},
+        tables={'people': 'SELECT * FROM people', 'piped': 'SELECT * FROM piped'},
+    )
+    restored = DuckDBSource.from_spec(yaml.safe_load(yaml.dump(source.to_spec())))
+    assert list(restored.get('people')['name']) == ['a', 'b']
+    assert list(restored.get('piped')['x']) == [1, 2, 3]
+
+
+def test_from_spec_restores_a_source_table_mirror():
+    # JSON turns the (source, table) tuple into a list, as YAML does
+    base = DuckDBSource.from_df({'base': pd.DataFrame({'x': [1, 2, 3]})})
+    source = DuckDBSource(uri=':memory:', mirrors={'copy': (base, 'base')}, tables={'copy': 'SELECT * FROM copy'})
+    restored = DuckDBSource.from_spec(json.loads(json.dumps(source.to_spec())))
+    assert list(restored.get('copy')['x']) == [1, 2, 3]
+
+
 def _sql_geometry_source():
     """A GEOMETRY table built in SQL alone, so no geopandas is needed.
 
@@ -1735,6 +1866,15 @@ def test_table_function_expression_is_queryable_by_name(table_function_source):
     assert result["n"].tolist() == [2]
 
 
+def test_table_function_with_keyword_arguments_is_read(tmp_path):
+    path = tmp_path / "orders.csv"
+    path.write_text("order_id,amount\n1,10\n2,NA\n")
+    source = DuckDBSource(uri=":memory:", tables={"orders": f"read_csv('{path}', nullstr='NA')"})
+    result = source.get("orders")
+    assert result["amount"].isna().tolist() == [False, True]
+    assert list(source.get_metadata("orders")["columns"]) == ["order_id", "amount"]
+
+
 def test_sql_expr_source_joins_table_functions_by_name(table_function_source):
     sql = "SELECT o.order_id, r.refund FROM orders o JOIN refunds r USING (order_id) ORDER BY o.order_id"
     derived = table_function_source.create_sql_expr_source({"joined": sql})
@@ -1769,7 +1909,8 @@ def test_missing_table_resolves_case_insensitively():
     assert source.missing_table(ValueError("Table with name orders does not exist!")) is None
 
 
-async def test_execute_with_timeout_interrupts_the_query():
+@pytest.mark.parametrize("timeout", [0, 0.1])
+async def test_execute_with_timeout_interrupts_the_query(timeout):
     source = DuckDBSource(uri=":memory:")
     connection, cursors = source._connection, []
 
@@ -1780,10 +1921,100 @@ async def test_execute_with_timeout_interrupts_the_query():
 
     source._connection = RecordingConnection()
     slow = "SELECT COUNT(*) AS n FROM range(100000000) a, range(100000000) b"
-    with pytest.raises(QueryTimeoutError, match="0.1 seconds"):
-        await source.execute_with_timeout(slow, 0.1)
-    await asyncio.sleep(0.2)
-    # The worker closes its cursor once the interrupted statement returns.
+    with pytest.raises(QueryTimeoutError, match=f"{timeout} seconds"):
+        await source.execute_with_timeout(slow, timeout)
+    # The worker has returned and closed its cursor, even when the timeout
+    # came before the statement started.
     with pytest.raises(duckdb.ConnectionException):
         cursors[0].execute("SELECT 1")
     assert (await source.execute_with_timeout("SELECT 1 AS n", 1, fetch=True))["n"].tolist() == [1]
+
+
+def _crs_source(crs="EPSG:4326"):
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    from shapely.geometry import Point
+    places = gpd.GeoDataFrame({"name": ["a"]}, geometry=[Point(13.4, 52.5)], crs=crs)
+    return DuckDBSource.from_df({"places": places})
+
+
+@pytest.mark.parametrize("query, epsg", [
+    # DuckDB drops the CRS through ST_Transform, so the target stands in
+    ("SELECT ST_Transform(geometry, 'EPSG:4326', 'EPSG:3857', always_xy := true) AS geometry FROM places", 3857),
+    ("SELECT * FROM (SELECT ST_Transform(geometry, 'EPSG:4326', 'EPSG:6933', always_xy := true) AS geometry FROM places)", 6933),
+    # A built geometry takes the one CRS the source's geometry shares
+    ("SELECT ST_Point(10, 50) AS geometry", 4326),
+    ("SELECT ST_Buffer(geometry, 1) AS geometry FROM places", 4326),
+], ids=["transform", "transform-in-subquery", "constructed", "kept"])
+def test_result_geometry_keeps_a_crs(query, epsg):
+    assert _crs_source().execute(query).crs.to_epsg() == epsg
+
+
+def test_result_geometry_crs_is_left_unset_when_ambiguous():
+    source = _crs_source()
+    query = (
+        "SELECT * FROM (SELECT ST_Transform(geometry, 'EPSG:4326', 'EPSG:3857', always_xy := true) AS geometry FROM places "
+        "UNION ALL SELECT ST_Transform(geometry, 'EPSG:4326', 'EPSG:6933', always_xy := true) FROM places)"
+    )
+    assert source.execute(query).crs is None
+
+
+def test_spheroid_functions_run_on_a_spatial_source_whatever_the_duckdb_version():
+    # DuckDB 2.0 raises from them until the axis order is set; Lumen keeps (lat, lon)
+    source = DuckDBSource(uri=":memory:", initializers=["INSTALL spatial;", "LOAD spatial;"])
+    triangle = "ST_GeomFromText('POLYGON((13 52, 14 52, 14 53, 13 52))')"
+    area = source.execute(f"SELECT ST_Area_Spheroid(ST_FlipCoordinates({triangle})) AS a")["a"].iloc[0]
+    assert 3.70e9 < area < 3.86e9
+
+
+@pytest.fixture
+def described_source():
+    return DuckDBSource.from_df({"orders": pd.DataFrame({"amount": [1.0, 2.0], "status": ["paid", "open"]})})
+
+
+def test_describe_sets_table_and_column_descriptions(described_source):
+    assert described_source.describe("orders", "One row per order", columns={"amount": "Order value in EUR"}) is described_source
+    metadata = described_source.get_metadata("orders")
+    assert metadata["description"] == "One row per order"
+    assert metadata["columns"]["amount"]["description"] == "Order value in EUR"
+    assert metadata["columns"]["amount"]["data_type"]  # the generated keys stay
+
+
+def test_describe_again_replaces_the_text(described_source):
+    described_source.describe("orders", columns={"amount": "Old"})
+    described_source.describe("orders", columns={"amount": {"description": "New"}})
+    assert described_source.get_metadata("orders")["columns"]["amount"]["description"] == "New"
+
+
+def test_describe_rejects_unknown_tables_and_columns(described_source):
+    with pytest.raises(ValueError, match="the tables are"):
+        described_source.describe("missing", "x")
+    with pytest.raises(ValueError, match=r"No column \['amnt'\] in 'orders'; it has \['amount', 'status'\]"):
+        described_source.describe("orders", columns={"amnt": "x"})
+
+
+def test_describe_wins_over_a_description_the_database_has(described_source):
+    generated = described_source.get_metadata("orders")
+    generated["description"] = "From the database"
+    with patch.object(type(described_source), "_get_table_metadata", return_value={"orders": generated}):
+        described_source._metadata_cache = {}
+        described_source.describe("orders", "Mine")
+        assert described_source.get_metadata("orders")["description"] == "Mine"
+
+
+def test_describe_keeps_the_data_cache(described_source):
+    described_source.get("orders")
+    cached = dict(described_source._cache)
+    described_source.describe("orders", "One row per order")
+    assert described_source._cache == cached and described_source.descriptions["orders"]["description"] == "One row per order"
+
+
+def test_describe_survives_a_round_trip_through_the_spec(described_source):
+    generated = described_source.get_metadata("orders")
+    generated["description"] = "From the database"
+    described_source.describe("orders", "Mine", columns={"amount": "Order value in EUR"})
+    restored = DuckDBSource.from_spec(described_source.to_spec())
+    with patch.object(DuckDBSource, "_get_table_metadata", return_value={"orders": generated}):
+        metadata = restored.get_metadata("orders")
+    assert metadata["description"] == "Mine"
+    assert metadata["columns"]["amount"]["description"] == "Order value in EUR"

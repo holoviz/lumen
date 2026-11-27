@@ -128,7 +128,10 @@ class BaseCodeAgent(BaseViewAgent):
             True if user approved, False if rejected.
         """
         if self.interface is None:
-            return True
+            raise RuntimeError(
+                "code_execution='prompt' asks before running generated code, which needs an "
+                "interface; without one use 'llm', 'allow' or 'disabled'."
+            )
 
         approval_event = asyncio.Event()
 

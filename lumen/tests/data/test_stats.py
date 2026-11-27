@@ -1,4 +1,4 @@
-"""Tests for lumen.ai.table_stats: tiered statistics, caching and rendering."""
+"""Tests for lumen.data.stats: tiered statistics, caching and rendering."""
 import asyncio
 import gc
 import json
@@ -10,18 +10,17 @@ import types
 import warnings
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
 
-try:
-    import lumen.ai  # noqa
-except ModuleNotFoundError:
-    pytest.skip("lumen.ai could not be imported, skipping tests.", allow_module_level=True)
+pytest.importorskip("duckdb")
 
-from lumen.ai.schemas import Metaset, TableCatalogEntry, get_metaset
-from lumen.ai.table_stats import (
+from lumen.config import SOURCE_TABLE_SEPARATOR
+from lumen.data.catalog import Metaset, TableCatalogEntry, get_metaset
+from lumen.data.stats import (
     ESTIMATED, EXACT, SAMPLED, SCHEMA, TYPES_ONLY, BigQueryStatsAdapter,
     ColumnStats, DuckDBStatsAdapter, SnowflakeStatsAdapter,
     SQLAlchemyStatsAdapter, StatementTimeout, StatsAdapter, TableProfiler,
@@ -29,7 +28,6 @@ from lumen.ai.table_stats import (
     _quote_qualified, _run_abandonable, column_kind, format_number,
     format_value, render_column, render_stats_header,
 )
-from lumen.config import SOURCE_TABLE_SEPARATOR
 from lumen.sources.duckdb import DuckDBSource
 
 try:
@@ -61,7 +59,7 @@ def duckdb_source():
 @pytest.fixture
 def sqlite_path(tmp_path):
     path = tmp_path / "shop.sqlite"
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute('CREATE TABLE "order" (order_id INTEGER PRIMARY KEY, account_id INTEGER REFERENCES account(account_id), k_symbol TEXT, day DATE)')
         conn.execute("CREATE TABLE account (account_id INTEGER PRIMARY KEY, frequency TEXT)")
         conn.executemany('INSERT INTO "order" VALUES (?, ?, ?, ?)', [
@@ -249,7 +247,7 @@ class TestStore:
         with patch.object(TableProfiler, "profile", side_effect=AssertionError("recomputed")):
             assert fresh.compute(_sqlite_source(sqlite_path), "account").rows == 5
 
-        with sqlite3.connect(sqlite_path) as conn:
+        with closing(sqlite3.connect(sqlite_path)) as conn, conn:
             conn.execute("INSERT INTO account VALUES (99, 'WEEKLY')")
         assert TableStatsStore(cache_dir=cache).compute(_sqlite_source(sqlite_path), "account").rows == 6
         # The in-memory entry is revalidated too, since SQLite is local.
@@ -303,6 +301,28 @@ class TestStore:
 
     async def test_schedule_without_loop_is_noop(self, duckdb_source):
         assert await asyncio.to_thread(TableStatsStore(cache_dir=None).schedule, duckdb_source, ["orders"]) == []
+
+    def test_a_loop_closed_before_the_task_finishes_raises_nothing(self, duckdb_source):
+        """A short-lived loop, e.g. one a script ran while building the UI, leaves
+        a started task behind that Python closes later, outside any loop."""
+        store = TableStatsStore(cache_dir=None)
+
+        async def start():
+            store.schedule(duckdb_source, ["orders"])
+            await asyncio.sleep(0)  # the task starts and waits for a slot
+
+        raised = []
+        # Garbage from earlier tests, e.g. their SQLite connections, is not this task's
+        gc.collect()
+        loop = asyncio.new_event_loop()
+        with patch("sys.unraisablehook", lambda unraisable: raised.append(unraisable.exc_value)):
+            with patch.object(store, "_async_slot", return_value=asyncio.Semaphore(0)):
+                loop.run_until_complete(start())
+            loop.close()
+            store._tasks.clear()
+            # Collected once nothing holds the task, outside any loop
+            gc.collect()
+        assert not raised
 
 
 # ---------------------------------------------------------------
@@ -481,7 +501,7 @@ class TestStatementTimeouts:
         pool = ThreadPoolExecutor(max_workers=1)
         pool.submit(release.wait)
         try:
-            with patch("lumen.ai.table_stats._executor", return_value=pool), pytest.raises(StatementTimeout):
+            with patch("lumen.data.stats._executor", return_value=pool), pytest.raises(StatementTimeout):
                 _run_abandonable(ran.set, 0.1)
         finally:
             release.set()
@@ -738,6 +758,8 @@ class TestMetasetFixes:
     async def test_legacy_schema_methods_warn(self, duckdb_source):
         slug = f"{duckdb_source.name}{SEP}orders"
         metaset = Metaset(query=None, catalog={slug: TableCatalogEntry(slug, 1, [], source=duckdb_source)})
+        # pytest.warns would also catch what earlier tests' garbage warns when collected
+        gc.collect()
         with pytest.warns(DeprecationWarning, match="ensure_schemas"):
             await metaset.ensure_schemas()
         assert slug in metaset.stats
@@ -752,7 +774,7 @@ class TestMetasetFixes:
             f"{duckdb_source.name}{SEP}orders", "orders", metaset.catalog[f"{duckdb_source.name}{SEP}orders"],
             "full", True, False, True, True, 0,
         )
-        from lumen.ai.utils import count_tokens
+        from lumen.data.utils import count_tokens
         tight = metaset.compact_context(max_tokens=count_tokens(full_orders) - 1, schema_tables=[
             f"{duckdb_source.name}{SEP}orders", f"{duckdb_source.name}{SEP}customers",
         ])
@@ -780,7 +802,7 @@ class TestChangeTokens:
 
     def test_update_in_sqlite_wal_mode_invalidates(self, sqlite_path):
         pytest.importorskip("sqlalchemy")
-        with sqlite3.connect(sqlite_path) as conn:
+        with closing(sqlite3.connect(sqlite_path)) as conn, conn:
             conn.execute("PRAGMA journal_mode=WAL")
         # An open connection keeps the WAL from being checkpointed away.
         writer = sqlite3.connect(sqlite_path)
@@ -872,7 +894,7 @@ class _UntypedSnowflake(SnowflakeStatsAdapter):
 
 
 def test_sample_ranges_are_never_labelled_exact():
-    from lumen.ai.table_stats import _Budget
+    from lumen.data.stats import _Budget
     adapter = _UntypedSnowflake(_FakeSnowflake())
     stats = TableStats("t", columns=[ColumnStats("v")])
     TableProfiler()._compute(adapter, stats, "t", None, _Budget(None))
@@ -942,7 +964,7 @@ def test_untyped_dates_and_decimals_keep_their_ranges():
     import datetime as dt
     import decimal
 
-    from lumen.ai.table_stats import _Budget
+    from lumen.data.stats import _Budget
 
     class Untyped(StatsAdapter):
         def sample_sql(self, relation, rows, total, seed):
@@ -971,7 +993,7 @@ def test_untyped_dates_and_decimals_keep_their_ranges():
 def test_sqlite_hash_sample_survives_large_rowids(tmp_path):
     pytest.importorskip("sqlalchemy")
     path = tmp_path / "events.sqlite"
-    with sqlite3.connect(path) as conn:
+    with closing(sqlite3.connect(path)) as conn, conn:
         conn.execute("CREATE TABLE events (ts INTEGER PRIMARY KEY, v INTEGER)")
         conn.executemany("INSERT INTO events VALUES (?, ?)", [(1_700_000_000_000 + i * 1000, i) for i in range(10_000)])
     source = SQLAlchemySource(url=f"sqlite:///{path}", tables=["events"])
@@ -1048,3 +1070,11 @@ async def test_due_recheck_does_not_delay_cached_stats(duckdb_source):
         assert time.monotonic() - start < 0.5
     assert result["orders"] is stats
     await asyncio.sleep(1.2)
+
+
+def test_geoparquet_crs_is_shown_as_its_code():
+    pyproj = pytest.importorskip("pyproj")
+    from lumen.data.stats import ColumnStats, render_column
+    projjson = pyproj.CRS.from_epsg(4326).to_json()
+    line = render_column(ColumnStats(name="geometry", type=f"GEOMETRY('{projjson}')"), detail="types")
+    assert line == "geometry GEOMETRY('EPSG:4326')"

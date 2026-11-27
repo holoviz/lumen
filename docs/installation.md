@@ -6,11 +6,13 @@ Lumen works with Python 3.11+ on Linux, Windows, and Mac.
     Jump to the [Quick Start](quick_start.md) to start chatting with your data.
 
 !!! info "Using conda?"
-    Lumen is on conda-forge. Install it together with the client library of your LLM provider, for example:
+    Lumen is on conda-forge, and the plain install is all you need for OpenAI and every OpenAI-compatible provider:
 
     ```bash
-    conda install -c conda-forge lumen openai
+    conda install -c conda-forge lumen
     ```
+
+    Providers with their own client library, such as Anthropic or Google, need that package too, for example `conda install -c conda-forge anthropic`.
 
 ## Bring Your Own LLM
 
@@ -212,13 +214,13 @@ Run open-source LLMs on your own machine. No API keys required, full privacy, fr
     3. Pull a model:
     
     ```bash
-    ollama pull qwen3.6:35b-a3b
+    ollama pull qwen3.5:9b
     ```
     
-    4. (Optional) Set custom endpoint if not using default:
+    4. (Optional) Point Lumen at an Ollama server that is not on `localhost:11434`:
     
     ```bash
-    export OLLAMA_BASE_URL=http://localhost:11434
+    export OLLAMA_HOST=your-server:11434
     ```
     
     **No additional environment variables needed!** Ollama works out of the box.
@@ -309,6 +311,8 @@ Use a unified interface to access multiple LLM providers and models.
     ```
 
     [Kilo](https://kilo.ai/) provides an OpenAI-compatible API for accessing models from multiple providers through a single API key or its free tier.
+
+    The free tier needs no API key: run `lumen-ai serve --provider kilo` and skip the steps below. Get a key to use paid models.
 
     **Get your API key:**
     

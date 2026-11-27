@@ -8,22 +8,25 @@ from copy import deepcopy
 from typing import ClassVar
 
 import numpy as np
+import pandas as pd
 import param  # type: ignore
 import sqlglot
 
 from sqlglot import parse
 from sqlglot.dialects.dialect import Dialect
 from sqlglot.expressions import (
-    LT, Alias, ArrayAgg, Column, Count, Distinct, Expression, Identifier,
-    Limit, Literal as SQLLiteral, Max, Min, Null, Pivot, ReadCSV, Select,
-    Semicolon, Star, Subquery, Table, TableAlias, TableSample, and_, func, or_,
-    replace_placeholders, select, to_identifier,
+    LT, Alias, ArrayAgg, Boolean, Column, Count, Distinct, Expression, Func,
+    Identifier, Limit, Literal as SQLLiteral, Max, Min, Null, Pivot, ReadCSV,
+    Select, Semicolon, Star, Subquery, Table, TableAlias, TableSample, and_,
+    func, or_, replace_placeholders, select, to_identifier,
 )
 from sqlglot.optimizer import optimize
 
 from ..config import SOURCE_TABLE_SEPARATOR
 from ..util import detect_file_encoding
-from .base import Transform
+from .base import (
+    Range, Transform, _is_range, parse_conditions, spec_conditions,
+)
 
 Dialect.classes['postgresql'] = Dialect.get('postgres')
 Dialect.classes['mssql'] = Dialect.get('tsql')
@@ -294,6 +297,11 @@ class SQLFormat(SQLTransform):
         return self.to_sql(replaced_expression,)
 
 
+def _alias(name: str) -> Identifier | None:
+    # An empty Identifier renders as AS "" under identify=True, which is invalid SQL
+    return Identifier(this=name) if name else None
+
+
 class SQLSelectFrom(SQLFormat):
 
     sql_expr = param.String(
@@ -323,9 +331,12 @@ class SQLSelectFrom(SQLFormat):
 
         # A bare table name that does not round-trip was mis-parsed as an
         # expression, e.g. 'data/life-expectancy.csv' becomes
-        # 'data / life-expectancy.csv' and '2014_sales' becomes '2014 AS _sales'
+        # 'data / life-expectancy.csv' and '2014_sales' becomes '2014 AS _sales'.
+        # A table function is exempt because keyword arguments are reprinted
+        # with spaces, e.g. nullstr='NA' becomes nullstr = 'NA'.
         if (
             not list(expression.find_all(Select))
+            and not isinstance(expression, Func)
             and expression.sql().strip().lower() != sql_in.strip().lower()
         ):
             expression = Table(this=Identifier(this=sql_in, quoted=True))
@@ -343,7 +354,7 @@ class SQLSelectFrom(SQLFormat):
                 else:
                     tables[existing_table] = Table(
                         this=Identifier(this=renamed_table),
-                        alias=Identifier(this=existing_table.alias),
+                        alias=_alias(existing_table.alias),
                     )
 
         else:
@@ -353,12 +364,12 @@ class SQLSelectFrom(SQLFormat):
                 elif isinstance(renamed_key, Table):
                     tables[renamed_key] = Table(
                         Identifier(this=renamed_value),
-                        alias=Identifier(this=renamed_key.alias),
+                        alias=_alias(renamed_key.alias),
                     )
                 elif isinstance(renamed_value, Table):
                     tables[
                         Table(
-                            this=renamed_key, alias=Identifier(this=renamed_value.alias)
+                            this=renamed_key, alias=_alias(renamed_value.alias)
                         )
                     ] = renamed_value
                 else:
@@ -372,7 +383,7 @@ class SQLSelectFrom(SQLFormat):
                     )
                     key_table = Table(
                         this=Identifier(this=renamed_key),
-                        alias=Identifier(this=alias),
+                        alias=_alias(alias),
                     )
                     # Try to parse renamed_value as SQL if it looks like a SQL expression
                     value_expr = None
@@ -388,7 +399,7 @@ class SQLSelectFrom(SQLFormat):
                     if value_expr is None:
                         value_expr = Table(
                             this=Identifier(this=renamed_value),
-                            alias=Identifier(this=alias),
+                            alias=_alias(alias),
                         )
                     tables[key_table] = value_expr
 
@@ -650,10 +661,76 @@ class SQLSort(SQLTransform):
         return self.to_sql(expression)
 
 
+# Dialects, by their SQLAlchemy or sqlglot names, without TRUE and FALSE literals.
+NO_BOOLEAN_LITERALS = frozenset({"mssql", "tsql", "oracle"})
+
+
+def _python_value(value):
+    """
+    A numpy scalar as the equivalent Python value. datetime64 and
+    timedelta64 go through pandas, since ``.item()`` turns nanosecond
+    precision into an integer; NaT becomes None.
+    """
+    if isinstance(value, (np.datetime64, np.timedelta64)):
+        if np.isnat(value):
+            return None
+        if isinstance(value, np.datetime64):
+            return pd.Timestamp(value).to_pydatetime(warn=False)
+        return pd.Timedelta(value).to_pytimedelta()
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
 class SQLFilterBase(SQLTransform):
     """
     Base class for SQL filtering transforms that provides common filtering logic.
     """
+
+    boolean_literals = param.Boolean(default=True, doc="""
+        Whether the engine has TRUE and FALSE literals; without them (SQL
+        Server, Oracle before 23ai) boolean conditions compare with 1 and 0.""")
+
+    def __init__(self, **params):
+        if "conditions" in params:
+            params["conditions"] = self._parse_conditions(params["conditions"])
+        super().__init__(**params)
+
+    @staticmethod
+    def _parse_conditions(conditions: list) -> list:
+        return parse_conditions(conditions)
+
+    @staticmethod
+    def _spec_conditions(conditions: list) -> list:
+        return spec_conditions(conditions)
+
+    def to_spec(self, context: dict | None = None) -> dict:
+        spec = super().to_spec(context=context)
+        if "conditions" in spec:
+            spec["conditions"] = self._spec_conditions(spec["conditions"])
+        return spec
+
+    @staticmethod
+    def _range_value_condition(column_expr: Column, value: Range) -> Expression | None:
+        """Build the condition of a ``Range``; a date bound stands for its whole day."""
+        if value.matches_nothing:
+            return column_expr.eq(Null())
+        start, start_in, end, end_in = value.bounds(temporal=True)
+        lower = upper = None
+        if start is not None:
+            literal = SQLLiteral.string(str(start))
+            lower = column_expr >= literal if start_in else column_expr > literal
+        if end is not None:
+            literal = SQLLiteral.string(str(end))
+            upper = column_expr <= literal if end_in else column_expr < literal
+        if lower is not None and upper is not None:
+            if start_in and end_in:
+                return column_expr.between(SQLLiteral.string(str(start)), SQLLiteral.string(str(end)))
+            return and_(lower, upper)
+        return lower if lower is not None else upper
+
+    def _boolean(self, value: bool) -> Expression:
+        return Boolean(this=value) if self.boolean_literals else SQLLiteral.number(int(value))
 
     @staticmethod
     def _range_condition(column_expr: Column, start, end) -> Expression | None:
@@ -690,19 +767,17 @@ class SQLFilterBase(SQLTransform):
             column_expr = Column(this=Identifier(this=col, quoted=True))
 
             # NumPy scalars are filtered like the equivalent Python values
-            if isinstance(val, np.datetime64):
-                if np.isnat(val):
-                    # NaT never compares equal, so it matches no rows (like Filter)
-                    filters.append(column_expr.eq(Null()))
-                    continue
-                val = val.astype("datetime64[us]")
-            if isinstance(val, np.generic):
-                val = val.item()
-
-            # Skip boolean values - they are not supported
-            if isinstance(val, bool):
-                self.param.warning(f"Boolean condition {val!r} on {col!r} column not supported. Filter query will not be applied.")
+            if isinstance(val, np.datetime64) and np.isnat(val):
+                # NaT never compares equal, so it matches no rows (like Filter)
+                filters.append(column_expr.eq(Null()))
                 continue
+            val = _python_value(val)
+            if isinstance(val, (tuple, list)):
+                # numpy booleans are left to the boolean list handling below
+                val = type(val)(v if isinstance(v, np.bool_) else _python_value(v) for v in val)
+
+            if isinstance(val, bool):
+                filters.append(column_expr.eq(self._boolean(val)))
             elif val is None:
                 filters.append(column_expr.is_(Null()))
             elif isinstance(val, (int, float)):
@@ -719,15 +794,30 @@ class SQLFilterBase(SQLTransform):
                 range_filter = self._range_condition(column_expr, *val)
                 if range_filter is not None:
                     filters.append(range_filter)
+            elif isinstance(val, Range):
+                range_filter = self._range_value_condition(column_expr, val)
+                if range_filter is not None:
+                    filters.append(range_filter)
+            elif isinstance(val, list) and val and all(isinstance(v, (bool, np.bool_)) for v in val):
+                filters.append(column_expr.isin(*[self._boolean(bool(v)) for v in val]))
             elif isinstance(val, list):
-                # Check for boolean values in list and skip them
+                # Booleans mixed with other values have no single SQL type, so skip them
                 if any(isinstance(v, bool) for v in val):
                     self.param.warning(f"Boolean values in list condition on {col!r} column not supported. Filter query will not be applied.")
                     continue
 
-                if all(isinstance(v, tuple) and len(v) == 2 for v in val):
+                if any(isinstance(v, Range) for v in val) and not all(_is_range(v) for v in val):
+                    self.param.warning(
+                        f"Condition {val!r} on {col!r} column mixes ranges with other values. "
+                        "Filter query will not be applied."
+                    )
+                    continue
+                if all(_is_range(v) for v in val):
                     range_filters = [
-                        f for f in (self._range_condition(column_expr, v1, v2) for v1, v2 in val)
+                        f for f in (
+                            self._range_value_condition(column_expr, v) if isinstance(v, Range)
+                            else self._range_condition(column_expr, *v) for v in val
+                        )
                         if f is not None
                     ]
                     if range_filters:
@@ -807,6 +897,22 @@ class SQLPreFilter(SQLFilterBase):
         Example: [("obs", [("obs_id", ["cell1", "cell2"])])]""")
 
     transform_type: ClassVar[str] = 'sql_prefilter'
+
+    @staticmethod
+    def _parse_conditions(conditions: list) -> list:
+        return [
+            (c[0], parse_conditions(c[1])) if isinstance(c, (list, tuple)) and len(c) == 2
+            and isinstance(c[1], list) else c
+            for c in conditions
+        ]
+
+    @staticmethod
+    def _spec_conditions(conditions: list) -> list:
+        return [
+            [c[0], spec_conditions(c[1])] if isinstance(c, (list, tuple)) and len(c) == 2
+            and isinstance(c[1], list) else c
+            for c in conditions
+        ]
 
     def apply(self, sql_in: str) -> str:
         if not self.conditions:

@@ -2,7 +2,10 @@ import datetime
 import inspect
 
 from abc import abstractmethod
-from contextlib import nullcontext
+from collections.abc import Callable
+from contextlib import contextmanager
+from contextvars import ContextVar
+from logging import getLogger
 from pathlib import Path
 from types import FunctionType
 from typing import Any
@@ -17,7 +20,7 @@ from .config import PROMPTS_DIR, SOURCE_TABLE_SEPARATOR
 from .context import ContextModel, TContext
 from .llm import Llm, Message, SubmitTool
 from .utils import (
-    class_name_to_llm_spec_key, log_debug, render_template,
+    class_name_to_llm_spec_key, log_debug, normalized_name, render_template,
     warn_on_unused_variables, wrap_logfire_on_method,
 )
 
@@ -74,13 +77,45 @@ def _merge_prompt_tools(
     return merged if merged else None
 
 
+#: Where steps report without an interface, e.g. from a notebook or script
+_progress = getLogger("lumen")
+
+# Receives each step title of a run without an interface, e.g. so
+# lumen.ai.ask can show which step a question is on
+step_title_callback: ContextVar[Callable[[str], None] | None] = ContextVar("step_title_callback", default=None)
+
+
 class NullStep:
 
-    def __init__(self):
+    def __init__(self, success_title: str | None = None):
         self.status = None
+        self.success_title = success_title
+        self.failed_title = None
 
     def stream(self, text, **kwargs):
         log_debug(f"[NullStep] {text}")
+
+    @contextmanager
+    def add(self, title: str, success_title: str | None = None, **kwargs):
+        """
+        A step that reports to the ``lumen`` logger instead of an interface:
+        the title at INFO when it starts, then its success title at INFO or
+        its failed title at WARNING when it ends.
+        """
+        step = NullStep(success_title)
+        if title:
+            _progress.info(title)
+            if (callback := step_title_callback.get()) is not None:
+                callback(title)
+        try:
+            yield step
+        except BaseException as e:
+            _progress.warning(step.failed_title or f"{title or 'Step'} failed: {e}")
+            raise
+        if step.success_title:
+            _progress.info(step.success_title)
+        elif step.failed_title:
+            _progress.warning(step.failed_title)
 
 
 class LLMUser(param.Parameterized):
@@ -213,12 +248,13 @@ class LLMUser(param.Parameterized):
     def _add_step(self, title: str = "", **kwargs):
         """Private contextmanager for adding steps to the interface.
 
-        If self.interface is None, returns a nullcontext that captures calls.
+        If self.interface is None, reports the step to the ``lumen`` logger
+        (see NullStep.add).
         Otherwise, returns the interface's add_step contextmanager.
         """
         if self.steps_layout is not None and 'steps_layout' not in kwargs:
             kwargs['steps_layout'] = self.steps_layout
-        return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
+        return self._null_step.add(title, **kwargs) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
     async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], context: TContext, **kwargs):
         """Gather context for the prompt template."""
@@ -306,6 +342,9 @@ class LLMUser(param.Parameterized):
         -------
         The structured response from the LLM
         """
+        merged_tools = _merge_prompt_tools(self.llm_tools, tools, context)
+        # The prompt names the tools the model is given
+        prompt_kwargs.setdefault("tool_names", [tool.name for tool in merged_tools or []])
         system = await self._render_prompt(prompt_name, messages, context, **prompt_kwargs)
         if response_model is None:
             try:
@@ -323,7 +362,6 @@ class LLMUser(param.Parameterized):
             model_spec = model_spec[model_index]
 
         invoke_kw: dict = {}
-        merged_tools = _merge_prompt_tools(self.llm_tools, tools, context)
         if merged_tools is not None:
             invoke_kw["tools"] = merged_tools
         if max_retries is not None:
@@ -385,7 +423,9 @@ class LLMUser(param.Parameterized):
         ------
         Chunks of the response from the LLM as they are generated
         """
-        # Render the prompt
+        stream_merged = _merge_prompt_tools(self.llm_tools, tools, context)
+        # The prompt names the tools the model is given
+        kwargs.setdefault("tool_names", [tool.name for tool in stream_merged or []])
         system = await self._render_prompt(prompt_name, messages, context, **kwargs)
 
         # Determine the response model
@@ -404,8 +444,6 @@ class LLMUser(param.Parameterized):
 
         if model_index is not None:
             model_spec = model_spec[model_index]
-
-        stream_merged = _merge_prompt_tools(self.llm_tools, tools, context)
 
         # Stream from the LLM
         async for chunk in self.llm.stream(
@@ -447,10 +485,11 @@ class Actor(LLMUser):
     def _add_step(self, title: str = "", **kwargs):
         """Private contextmanager for adding steps to the interface.
 
-        If self.interface is None, returns a nullcontext that captures calls.
+        If self.interface is None, reports the step to the ``lumen`` logger
+        (see NullStep.add).
         Otherwise, returns the interface's add_step contextmanager.
         """
-        return nullcontext(self._null_step) if self.interface is None else self.interface.add_step(title=title, **kwargs)
+        return self._null_step.add(title, **kwargs) if self.interface is None else self.interface.add_step(title=title, **kwargs)
 
     async def _gather_prompt_context(self, prompt_name: str, messages: list[Message], context: TContext, **kwargs):
         """Gather context for the prompt template."""
@@ -509,9 +548,9 @@ class ContextProvider(param.Parameterized):
 
     def __str__(self):
         string = (
-            f"- {self.name[:-5]}: {' '.join(self.purpose.strip().split())}\n"
-            f"  Requires: `{'`, `'.join(self.input_schema.__required_keys__)}`\n"
-            f"  Provides: `{'`, `'.join(self.output_schema.__required_keys__)}`\n"
+            f"- {normalized_name(self)}: {' '.join(self.purpose.strip().split())}\n"
+            f"  Requires: `{'`, `'.join(sorted(self.input_schema.__required_keys__))}`\n"
+            f"  Provides: `{'`, `'.join(sorted(self.output_schema.__required_keys__))}`\n"
         )
         if self.conditions:
             string += "  Conditions:\n" + "\n".join(f"  - {condition}" for condition in self.conditions) + "\n"

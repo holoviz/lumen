@@ -40,8 +40,9 @@ from ..filters.base import Filter
 from ..state import state
 from ..transforms.base import Filter as FilterTransform, Transform
 from ..transforms.sql import (
-    ARRAY_AGG_DISTINCT_DIALECTS, SQLCount, SQLDistinct, SQLFilter, SQLLimit,
-    SQLMinMax, SQLSample, SQLSchemaStats, SQLSelectFrom, SQLTransform,
+    ARRAY_AGG_DISTINCT_DIALECTS, NO_BOOLEAN_LITERALS, SQLCount, SQLDistinct,
+    SQLFilter, SQLLimit, SQLMinMax, SQLSample, SQLSchemaStats, SQLSelectFrom,
+    SQLTransform,
 )
 from ..util import (
     DATAFRAME_BACKENDS, as_narwhals, collect_lazy, get_dataframe_schema,
@@ -52,6 +53,11 @@ from ..validation import ValidationError, match_suggestion_message
 if TYPE_CHECKING:
     from dask.dataframe import DataFrame as dDataFrame, Series as dSeries
     from panel.viewable import Viewable
+
+    from ..ai.answer import Answer, Answers, Chat
+    from ..ai.checks import CheckResult
+    from ..ai.llm import Llm
+    from ..ai.overview import Overview
 
     DataFrame = pd.DataFrame | dDataFrame
     Series = pd.Series | dSeries
@@ -192,6 +198,62 @@ def cached_schema(method, locks=None):
     return wrapped
 
 
+def _is_empty_metadata(value) -> bool:
+    return value is None or (isinstance(value, str) and not value)
+
+
+def _as_column_metadata(value) -> dict:
+    """
+    Normalizes a column entry, treating a plain string as its description.
+    """
+    if isinstance(value, str):
+        return {'description': value} if value else {}
+    return dict(value) if isinstance(value, dict) else {}
+
+
+def _merge_column_metadata(generated, user: dict) -> dict:
+    """
+    Fills missing or empty keys of the generated column entries from the
+    user column entries. User columns that are not among the generated
+    columns are skipped, unless no columns were generated at all.
+    """
+    columns = dict(generated) if isinstance(generated, dict) else {}
+    known = set(columns)
+    for column, value in user.items():
+        if known and column not in known:
+            continue
+        merged = _as_column_metadata(columns.get(column))
+        for key, user_value in _as_column_metadata(value).items():
+            if _is_empty_metadata(merged.get(key)):
+                merged[key] = user_value
+        columns[column] = merged
+    return columns
+
+
+def _apply_descriptions(generated: dict, described: dict) -> None:
+    """
+    Writes what describe() set over the generated metadata, so a user's
+    words replace a description the database already had.
+    """
+    if "description" in described:
+        generated["description"] = described["description"]
+    columns = generated.setdefault("columns", {})
+    for column, entry in described.get("columns", {}).items():
+        columns[column] = {**_as_column_metadata(columns.get(column)), **entry}
+
+
+def _merge_user_metadata(generated: dict, user: dict) -> None:
+    """
+    Merges user supplied table metadata into the generated metadata,
+    filling keys that are missing or empty, including per-column entries.
+    """
+    for key, value in user.items():
+        if key == 'columns' and isinstance(value, dict):
+            generated[key] = _merge_column_metadata(generated.get(key), value)
+        elif _is_empty_metadata(generated.get(key)):
+            generated[key] = value
+
+
 def cached_metadata(method, locks=None):
     if locks is None:
         locks = weakref.WeakKeyDictionary()
@@ -276,9 +338,19 @@ class Source(MultiTypeComponent):
         dashboard. If set to `True` the Source will be loaded on
         initial server load.""")
 
+    descriptions = param.Dict(default={}, doc="""
+        Table and column descriptions set with describe(), in the same
+        format as metadata. Unlike metadata, they replace a description
+        the database already has rather than filling in a missing one.""")
+
     metadata = param.Dict(default={}, doc="""
         Optional metadata about the source tables. Should follow the format:
-        {"table_name": {"description": ..., "columns": {"column_name": "..."}}}""")
+        {"table_name": {"description": ..., "columns": {"column_name": "..."}}}
+
+        A column entry may be a description string or a dict of column
+        metadata. These values only fill metadata that is missing or empty
+        in the generated metadata (from metadata_func or the Source itself);
+        non-empty generated values take precedence.""")
 
     source_type: ClassVar[str | None] = None
 
@@ -388,6 +460,8 @@ class Source(MultiTypeComponent):
         self._cache = {}
         self._schema_cache = {}
         self._metadata_cache = {}
+        # Bumped when describe() changes the metadata, so caches of it refresh
+        self._metadata_revision = 0
 
     def _get_key(self, table: str, **query) -> str:
         sha = hashlib.sha256()
@@ -611,6 +685,131 @@ class Source(MultiTypeComponent):
         """
         return None
 
+    def ask(
+        self, question: str, *, llm: Llm | None = None, agents: list | None = None, confirm: bool = False,
+        returns: Any = None,
+    ) -> Answer:
+        """
+        Ask this source a question with Lumen AI and return the Answer.
+
+        ``llm`` defaults to the first provider with an API key set, and
+        ``agents`` to the ones :func:`lumen.ai.answer.ask` picks for the data.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import ask
+        return ask(self, question, llm=llm, agents=agents, confirm=confirm, returns=returns)
+
+    async def aask(
+        self, question: str, *, llm: Llm | None = None, agents: list | None = None, confirm: bool = False,
+        returns: Any = None,
+    ) -> Answer:
+        """
+        Ask this source a question with Lumen AI and await the Answer.
+
+        ``llm`` defaults to the first provider with an API key set, and
+        ``agents`` to the ones :func:`lumen.ai.answer.aask` picks for the data.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import aask
+        return await aask(self, question, llm=llm, agents=agents, confirm=confirm, returns=returns)
+
+    def ask_many(
+        self, questions: list[str], *, llm: Llm | None = None, agents: list | None = None,
+        returns: Any = None, concurrency: int = 4,
+    ) -> Answers:
+        """
+        Ask this source several independent questions at once and return their
+        Answers in order, at most ``concurrency`` in flight at a time.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import ask_many
+        return ask_many(self, questions, llm=llm, agents=agents, returns=returns, concurrency=concurrency)
+
+    async def aask_many(
+        self, questions: list[str], *, llm: Llm | None = None, agents: list | None = None,
+        returns: Any = None, concurrency: int = 4,
+    ) -> Answers:
+        """
+        Ask this source several independent questions at once and await their
+        Answers in order, at most ``concurrency`` in flight at a time.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import aask_many
+        return await aask_many(self, questions, llm=llm, agents=agents, returns=returns, concurrency=concurrency)
+
+    def describe(self, table: str, description: str | None = None, columns: dict | None = None) -> Source:
+        """
+        Describe a table and its columns in your own words, for the LLM to
+        read when it plans and writes SQL. Your text replaces any description
+        the database has for the same table or column.
+
+        Parameters
+        ----------
+        table: str
+            The table to describe.
+        description: str | None
+            What the table holds, e.g. "One row per order since 2020".
+        columns: dict | None
+            Column descriptions by name, e.g. {"amount": "Order value in EUR"}.
+
+        Returns
+        -------
+        The source, so calls can be chained.
+        """
+        if table not in self.get_tables():
+            raise ValueError(f"No table {table!r}; the tables are {self.get_tables()}.")
+        known = set(self.get_metadata(table).get("columns", {}))
+        if unknown := set(columns or {}) - known:
+            raise ValueError(f"No column {sorted(unknown)} in {table!r}; it has {sorted(known)}.")
+        described = dict(self.descriptions.get(table, {}))
+        if description is not None:
+            described["description"] = description
+        if columns:
+            described["columns"] = {
+                **described.get("columns", {}),
+                **{column: _as_column_metadata(value) for column, value in columns.items()},
+            }
+        # A parameter, so specs and answer.code carry it. Without events: a
+        # parameter change otherwise clears the data cache, on disk too, for
+        # what is only a change of words.
+        with param.parameterized.discard_events(self):
+            self.descriptions = {**self.descriptions, table: described}
+        self._metadata_cache = {}
+        self._metadata_revision += 1
+        return self
+
+    def chat(self, *, llm: Llm | None = None, agents: list | None = None) -> Chat:
+        """
+        Start a conversation with this source, where each question can follow
+        up on the answers before it. See :func:`lumen.ai.answer.chat`.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import chat
+        return chat(self, llm=llm, agents=agents)
+
+    def overview(self, *, questions: bool = True, llm: Llm | None = None) -> Overview:
+        """
+        A first look at this source: each table's columns with their
+        types, nulls and ranges, what looks wrong in the data, and five
+        questions to ask it, as buttons in a notebook. questions=False
+        skips the one LLM call that writes them.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.overview import overview
+        return overview(self, questions=questions, llm=llm)
+
+    def check(self, rule: str, table: str | None = None, *, llm: Llm | None = None) -> CheckResult:
+        """
+        Check a rule the data should keep and return the rows that break
+        it. rule is a SELECT returning those rows, or a rule in plain
+        language that one LLM call turns into one. The result is falsy when
+        rows break the rule, so ``assert source.check(...)`` works in pytest
+        and its message shows them.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.checks import check
+        return check(self, rule, table, llm=llm)
+
     def get_tables(self) -> list[str]:
         """
         Returns the list of tables available on this source.
@@ -716,9 +915,8 @@ class Source(MultiTypeComponent):
 
         # Merge source.metadata with metadata_func output
         for table_name in tables:
-            for key, value in self.metadata.get(table_name, {}).items():
-                if key not in metadata[table_name]:
-                    metadata[table_name][key] = value
+            _merge_user_metadata(metadata[table_name], self.metadata.get(table_name, {}))
+            _apply_descriptions(metadata[table_name], self.descriptions.get(table_name, {}))
 
         return metadata
 
@@ -1301,7 +1499,7 @@ class BaseSQLSource(Source):
 
         conditions = list(query.items())
         if conditions:
-            sql_filter = SQLFilter(conditions=conditions)
+            sql_filter = SQLFilter(conditions=conditions, boolean_literals=self.dialect not in NO_BOOLEAN_LITERALS)
             sql_expr = sql_filter.apply(sql_expr)
 
         # Through execute_async rather than fetch, because a source with a
