@@ -36,7 +36,9 @@ from ..filters import WidgetFilter
 from ..pipeline import Pipeline
 from ..transforms.sql import SQLLimit
 from ..util import as_pandas
-from ..views.base import Panel, Table, View
+from ..views.base import (
+    Panel, Table, View, _force_light_theme,
+)
 from .analysis import Analysis
 from .config import FORMAT_ICONS, FORMAT_LABELS
 from .controls import (
@@ -373,7 +375,7 @@ class VegaLiteEditor(LumenEditor):
             spec["width"] = 800
         if spec.get("height") == "container" or "height" not in spec:
             spec["height"] = 400
-        with self.param.update(spec=dump_yaml(spec)):
+        with self.param.update(spec=dump_yaml(spec)), _force_light_theme():
             out = self.component.get_panel().export(render_fmt, **kwargs)
 
         if fmt in self._pillow_formats:
@@ -883,9 +885,16 @@ class MultiChartEditor(LumenEditor):
         if fmt == "yaml":
             return StringIO("---\n".join(editor.spec for editor in editors))
         if fmt == "html":
-            # Save the live stacked composite as one standalone, offline page.
+            # Rebuilt rather than saved live: the live stack caches panes
+            # rendered in the dashboard theme.
             buf = StringIO()
-            self.component.get_panel().save(buf)
+            with _force_light_theme():
+                stacked = Column(
+                    *(editor.component.get_panel() for editor in editors
+                      if editor.component is not None),
+                    sizing_mode="stretch_width",
+                )
+                stacked.save(buf)
             buf.seek(0)
             return buf
         if not editors:

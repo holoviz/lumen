@@ -952,8 +952,8 @@ async def test_exploration_preview_reads_the_source_frame_unconverted(backend):
     """
     pytest.importorskip("duckdb")
     pytest.importorskip(backend)
-    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
-    from lumen.ai.agents import sql as sql_module
+    pytest.importorskip("tabulate")
+    from lumen.data import sql as sql_module
 
     source = _exploration_source(dataframe_backend=backend)
     seen = []
@@ -982,8 +982,8 @@ async def test_exploration_preview_renders_the_same_rows_on_any_backend(backend)
     """
     pytest.importorskip("duckdb")
     pytest.importorskip(backend)
-    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
-    from lumen.ai.agents.sql import execute_exploration_sql
+    pytest.importorskip("tabulate")
+    from lumen.data.sql import execute_exploration_sql
 
     async def preview(**params):
         source = _exploration_source(**params)
@@ -1019,8 +1019,8 @@ async def test_exploration_preview_handles_an_empty_result(backend):
     pytest.importorskip("duckdb")
     if backend is not None:
         pytest.importorskip(backend)
-    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
-    from lumen.ai.agents.sql import execute_exploration_sql
+    pytest.importorskip("tabulate")
+    from lumen.data.sql import execute_exploration_sql
 
     source = _exploration_source(dataframe_backend=backend)
     result = await execute_exploration_sql(
@@ -1038,8 +1038,8 @@ def test_exploration_preview_converts_only_the_rendered_cells():
     whole frame were converted.
     """
     pl = pytest.importorskip("polars")
-    pytest.importorskip("pydantic", reason="lumen.ai needs the ai extra")
-    from lumen.ai.agents.sql import (
+    pytest.importorskip("tabulate")
+    from lumen.data.sql import (
         EXPLORATION_PREVIEW_COLS, EXPLORATION_PREVIEW_ROWS,
         format_exploration_result,
     )

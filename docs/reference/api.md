@@ -5,6 +5,7 @@ Welcome to the Lumen API documentation. Browse the modules below:
 ## Modules
 
 - [AI Module](api/ai.md) - AI-powered agents and analysis
+- [Data](api/data.md) - Model-free tools for describing data to a language model and running its SQL safely
 - [Pipeline](api/pipeline.md) - Data pipeline components
 - [Filters](api/filters.md) - Interactive data filters
 - [Variables](api/variables.md) - Shared variables for specifications

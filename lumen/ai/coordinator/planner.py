@@ -33,7 +33,7 @@ from ..tools import MetadataLookup, SourceLookup, Tool
 from ..tools.clarification_llm_tool import make_clarification_llm_tool
 from ..utils import (
     content_to_text, get_root_exception, inline_schema_defs, log_debug,
-    mutate_user_message, wrap_logfire,
+    mutate_user_message, print_task_exception, wrap_logfire,
 )
 from .base import Coordinator, Plan, format_todo
 
@@ -537,7 +537,7 @@ class Planner(Coordinator):
         context: TContext,
         previous_actors: list[str],
         is_followup: bool = False
-    ) -> tuple[Plan, set[str], list[str]]:
+    ) -> tuple[Plan, list[str]]:
         table_provided = False
         tasks = []
         provided = set(context)
@@ -663,7 +663,8 @@ class Planner(Coordinator):
             context=context,
             coordinator=self,
             steps_layout=self.steps_layout,
-            is_followup=is_followup
+            is_followup=is_followup,
+            planner_actors=actors,
         )
         return plan, actors
 
@@ -708,8 +709,8 @@ class Planner(Coordinator):
                 except Exception as e:
                     istep.failed_title = "Internal execution error during planning stage."
                     self._todos_title.object = "Planner could not settle on a plan of action to perform the requested query. Please restate your request."
-                    traceback.print_exception(e)
-                    raise e
+                    print_task_exception(e)
+                    raise
                 if raw_plan.unanswerable and not raw_plan.steps:
                     # Nothing to resolve or validate: the answer is the reason
                     plan = Plan(
@@ -729,6 +730,7 @@ class Planner(Coordinator):
                 plan, previous_actors = await self._resolve_plan(
                     raw_plan, agents, tools, messages, context, previous_actors, is_followup=is_followup
                 )
+                plan.follow_up_type = follow_up_type
                 try:
                     plan.validate()
                 except ContextError as e:
@@ -740,7 +742,7 @@ class Planner(Coordinator):
                     istep.failed_title = "Planning failed to come up with viable plan, please restate the problem and try again."
                     self._todos_title.object = "❌ Planning failed"
                     e = RuntimeError("Planner failed to come up with viable plan after 5 attempts.")
-                    traceback.print_exception(e)
+                    print_task_exception(e)
                     raise e
 
             # Store the todo message reference for later updates

@@ -12,11 +12,12 @@ If user asks "make it look better", "professional", "publication-ready", or simi
 
 1. **Remove clutter**: `config.view.stroke: null` (no border)
 2. **Clean gridlines**: 
-   - Horizontal bars: keep x-axis grid (`config.axisX.gridColor: '#eeeeee'`), disable y-axis (`config.axisY.grid: false`)
-   - Vertical bars: keep y-axis grid (`config.axisY.gridColor: '#eeeeee'`), disable x-axis (`config.axisX.grid: false`)
+   - Horizontal bars: keep x-axis grid (`config.axisX.grid: true`), disable y-axis (`config.axisY.grid: false`)
+   - Vertical bars: keep y-axis grid (`config.axisY.grid: true`), disable x-axis (`config.axisX.grid: false`)
+   - Leave grid colors to the theme; never set `gridColor`
 3. **Increase font sizes**: `title.fontSize: 26`, `title.subtitleFontSize: 18`, `config.axis.labelFontSize: 16`
 4. **Selective emphasis**: If multiple lines/series, reduce opacity of less important ones (`opacity: 0.2-0.3`)
-5. **Use semantic colors**: map meaning to color (warm=red, cool=blue) with explicit `scale.domain` and `scale.range`
+5. **Use semantic colors only when color carries meaning**: map meaning to color (warm=red, cool=blue) with explicit `scale.domain` and `scale.range`; otherwise leave the categorical encoding plain so the shared palette applies
 6. **Add value labels**: with units via `transform.calculate`, positioned with `dy` offset
 7. **Clean tick labels**: use `labelExpr` to format values (snake_case → Title Case)
 8. **Limit results**: For bar charts with 10+ categories, show top 5-10 using **top-level** `transform`
@@ -39,7 +40,7 @@ config:
   axisX:
     grid: false
   axisY:
-    gridColor: '#cccccc'
+    grid: true
   title:
     fontSize: 26
     subtitleFontSize: 18
@@ -100,12 +101,12 @@ Do NOT use `expr` in `dy` - use separate filtered layers:
 ## Solid zero line
 ```yaml
 - encoding: {y: {datum: 0}}
-  mark: {type: rule, color: '#333333', size: 2}
+  mark: {type: rule, color: gray, size: 2}
 ```
 
 ## Static color (remove color encoding, add to mark)
 ```yaml
-mark: {type: bar, color: '#888888'}
+mark: {type: bar, color: gray}
 ```
 
 ## Axis formatting

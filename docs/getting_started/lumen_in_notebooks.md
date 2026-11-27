@@ -76,6 +76,22 @@ To keep a conversation:
 | `chat.to_notebook("chat.ipynb")` | Each question and answer, then Lumen code that rebuilds its chart or data with no LLM |
 | `chat.to_report("Penguins")` | A Lumen Report of the answers and their charts, with its own `to_html`, `to_notebook` and `to_docx` |
 
+## Ask several questions
+
+Independent questions run at the same time with `ask_many`, which returns their answers in order:
+
+``` py
+answers = source.ask_many([
+    "How many penguins are there per island?",
+    "Which species has the longest flippers?",
+    "What is the average body mass by sex?",
+], llm=Kilo())
+answers            # each question over its answer's card
+answers.to_frame() # one row per question: status, answer, SQL, seconds, tokens and cost
+```
+
+At most four questions are in flight at a time; `concurrency=` changes that, e.g. `concurrency=1` to stay under a provider's rate limit. A question asked twice is asked once. A question that fails comes back with `status="error"` without stopping the others, and interrupting the kernel cancels them all. `await source.aask_many(...)` is the async form. Each question is asked on its own, so use a [chat](#follow-up) when one builds on another.
+
 ## Check the data
 
 `source.check` takes a rule the data should keep and returns the rows that break it:
@@ -148,7 +164,7 @@ explorer.settings()        # the hvPlot keywords you ended up with
 
 ## When a question fails
 
-A question that cannot be answered still returns an `Answer`, with `status` set to `"error"`. Its card shows the error and the failed SQL, open. Ask again with a hint:
+A failure during planning or execution returns an `Answer` with `status` set to `"error"`. Its card shows the error and opens the failed SQL if there is any. For a temporary model provider outage, use `answer.retry()` once the provider is available again. You can also retry with a hint:
 
 ``` py
 answer = source.ask("Average flipper length by island in cm?", llm=Kilo())

@@ -73,6 +73,10 @@ class Plan(Section):
 
     is_followup = param.Boolean(default=False)
 
+    follow_up_type = param.Selector(default="new", objects=["new", "direct", "derived"])
+
+    planner_actors = param.List(item_type=str, default=[])
+
     unanswerable = param.String(default=None, allow_None=True, doc="""
         Why the data cannot answer the question, when the planner found
         that it cannot; the plan then has no steps.""")
@@ -84,6 +88,12 @@ class Plan(Section):
 
     # For each step run: (seconds, LLM calls), by the step's index
     _runs = param.Dict(default={})
+
+    def merge(self, other):
+        super().merge(other)
+        self.follow_up_type = other.follow_up_type
+        self.planner_actors = list(other.planner_actors)
+        return self
 
     def _edges(self) -> list[tuple[int, int, str]]:
         """graph's edges by step index, which stay apart when titles repeat."""

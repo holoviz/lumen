@@ -205,7 +205,9 @@ def test_nested_recording_restores_the_outer_invoke(tmp_path):
     assert llm.invoke.__name__ == "invoke"
 
 
-@pytest.mark.parametrize("text, kept", [("MetadataLookup00348", False), ("CA94110", True), ("id_10234", True)])
+@pytest.mark.parametrize("text, kept", [
+    ("MetadataLookup00348", False), ("MetadataLookup100348", False), ("CA94110", True), ("id_10234", True),
+])
 def test_only_generated_names_lose_their_counter(text, kept):
     from lumen.ai.testing import _normalize
     assert (_normalize(text) == text) is kept

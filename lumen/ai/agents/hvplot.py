@@ -14,7 +14,7 @@ from ...views import hvPlotView
 from ...views.base import BAR_KINDS, GRIDDED_KINDS, VALUE_AGGREGATORS
 from ..config import PROMPTS_DIR
 from ..context import TContext
-from ..translate import param_to_pydantic
+from ..translate import UnwrappedValues, param_to_pydantic
 from ..utils import get_data
 from .base_view import BaseViewAgent
 
@@ -110,7 +110,7 @@ class hvPlotAgent(BaseViewAgent):
         ]
         model = param_to_pydantic(
             self.view_type,
-            base_model=BaseModel,
+            base_model=UnwrappedValues,
             excluded=excluded,
             schema=schema,
             extra_fields={

@@ -40,8 +40,9 @@ from ..filters.base import Filter
 from ..state import state
 from ..transforms.base import Filter as FilterTransform, Transform
 from ..transforms.sql import (
-    ARRAY_AGG_DISTINCT_DIALECTS, SQLCount, SQLDistinct, SQLFilter, SQLLimit,
-    SQLMinMax, SQLSample, SQLSchemaStats, SQLSelectFrom, SQLTransform,
+    ARRAY_AGG_DISTINCT_DIALECTS, NO_BOOLEAN_LITERALS, SQLCount, SQLDistinct,
+    SQLFilter, SQLLimit, SQLMinMax, SQLSample, SQLSchemaStats, SQLSelectFrom,
+    SQLTransform,
 )
 from ..util import (
     DATAFRAME_BACKENDS, as_narwhals, collect_lazy, get_dataframe_schema,
@@ -53,7 +54,7 @@ if TYPE_CHECKING:
     from dask.dataframe import DataFrame as dDataFrame, Series as dSeries
     from panel.viewable import Viewable
 
-    from ..ai.answer import Answer, Chat
+    from ..ai.answer import Answer, Answers, Chat
     from ..ai.checks import CheckResult
     from ..ai.llm import Llm
     from ..ai.overview import Overview
@@ -711,6 +712,30 @@ class Source(MultiTypeComponent):
         # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
         from ..ai.answer import aask
         return await aask(self, question, llm=llm, agents=agents, confirm=confirm, returns=returns)
+
+    def ask_many(
+        self, questions: list[str], *, llm: Llm | None = None, agents: list | None = None,
+        returns: Any = None, concurrency: int = 4,
+    ) -> Answers:
+        """
+        Ask this source several independent questions at once and return their
+        Answers in order, at most ``concurrency`` in flight at a time.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import ask_many
+        return ask_many(self, questions, llm=llm, agents=agents, returns=returns, concurrency=concurrency)
+
+    async def aask_many(
+        self, questions: list[str], *, llm: Llm | None = None, agents: list | None = None,
+        returns: Any = None, concurrency: int = 4,
+    ) -> Answers:
+        """
+        Ask this source several independent questions at once and await their
+        Answers in order, at most ``concurrency`` in flight at a time.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import aask_many
+        return await aask_many(self, questions, llm=llm, agents=agents, returns=returns, concurrency=concurrency)
 
     def describe(self, table: str, description: str | None = None, columns: dict | None = None) -> Source:
         """
@@ -1474,7 +1499,7 @@ class BaseSQLSource(Source):
 
         conditions = list(query.items())
         if conditions:
-            sql_filter = SQLFilter(conditions=conditions)
+            sql_filter = SQLFilter(conditions=conditions, boolean_literals=self.dialect not in NO_BOOLEAN_LITERALS)
             sql_expr = sql_filter.apply(sql_expr)
 
         # Through execute_async rather than fetch, because a source with a

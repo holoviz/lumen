@@ -201,6 +201,29 @@ def test_answer_without_counted_calls_has_no_usage_line(chart_answer):
     assert chart_answer.with_spec(chart_answer._chart_spec()[1]).usage.records == []
 
 
+@pytest.mark.parametrize("ask_fn", [ask, aask])
+async def test_planning_error_returns_a_retryable_answer(ask_fn, llm, frame_source, capsys):
+    def fail():
+        raise RuntimeError("provider down")
+
+    llm.set_responses([fail, _plan(("ChatAgent", "Explain")), "Three rows."])
+    question = "How many rows?"
+    agents = [ChatAgent(), SQLAgent()]
+    if ask_fn is aask:
+        failed = await aask(frame_source, question, llm=llm, agents=agents)
+    else:
+        failed = ask(frame_source, question, llm=llm, agents=agents)
+
+    assert failed.status == "error"
+    assert failed.error == "RuntimeError: provider down"
+    assert failed.plan is None and failed.sql is None
+    assert "Traceback" not in capsys.readouterr().err
+
+    retried = await failed.aretry() if ask_fn is aask else failed.retry()
+    assert retried.status == "success"
+    assert retried.question == question and retried.value == "Three rows."
+
+
 async def test_aask_returns_an_error_answer_when_the_plan_fails(llm, frame_source):
     def fail():
         raise RuntimeError("LLM unavailable")
@@ -2113,14 +2136,20 @@ def test_the_chat_widget_starts_with_the_answers_so_far(chart_answer, frame_sour
     assert question.object == "Value by category?" and card.object is chart_answer.__panel__()
 
 
-async def test_a_failed_call_in_the_chat_widget_shows_an_error(frame_source):
-    class Failing(MockLLM):
-        async def invoke(self, *args, **kwargs):
-            raise RuntimeError("rate limited")
+async def test_a_failed_call_in_the_chat_widget_shows_an_error(llm, frame_source):
+    _chat_only(llm)
+    conversation = chat(frame_source, llm=llm, agents=[ChatAgent(), SQLAgent()])
+    first = await conversation.aask("How many rows?")
+    assert first.status == "success"
+    history, context = conversation._messages.copy(), conversation._context
 
-    conversation = chat(frame_source, llm=Failing(), agents=[ChatAgent(), SQLAgent()])
-    reply = await conversation._reply("Total value?", "User", conversation.__panel__())
-    assert reply.severity == "error" and "rate limited" in reply.object
+    with patch.object(llm, "invoke", side_effect=RuntimeError("rate limited")):
+        reply = await conversation._reply("Total value?", "User", conversation.__panel__())
+
+    first_answer, failed = conversation.answers
+    assert first_answer is first and failed.status == "error"
+    assert reply[0].severity == "error" and "rate limited" in reply[0].object
+    assert conversation._messages == history and conversation._context is context
 
 
 def test_a_chat_outside_a_kernel_is_its_answers_as_html(chart_answer, frame_source):
@@ -2210,6 +2239,41 @@ def test_a_click_on_a_vega_lite_chart_selects_its_rows_and_shows_the_ask_box(cha
     assert box[0].object == "**Selected:** category: B, value: 20"
     pane.selection.param.update(**{CLICK: []})
     assert chart_answer.selection is None and not box.visible
+
+
+def test_a_choropleth_with_a_multipolygon_selects_whole_shapes():
+    from shapely.geometry import MultiPolygon
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    square = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+    islands = MultiPolygon([Polygon([(2, 0), (3, 0), (3, 1)]), Polygon([(4, 0), (5, 0), (5, 1), (4, 1)])])
+    source = read({"regions": gpd.GeoDataFrame({"name": ["mainland", "islands"], "v": [1.0, 2.0]}, geometry=[square, islands], crs="EPSG:4326")})
+    pipeline = Pipeline(source=source, table="regions")
+    view = hvPlotView(pipeline=pipeline, kind="polygons", z="v")
+    answer = Answer(question="?", status="success", pipeline=pipeline, view=view)
+    answer.__panel__()
+    answer._streams[-1].event(index=[1])
+    assert list(answer.selection["name"]) == ["islands"]
+
+
+def test_a_choropleth_split_by_category_with_a_multipolygon_selects_whole_shapes():
+    from holoviews.streams import Selection1D
+    from shapely.geometry import MultiPolygon
+    if gpd is None:
+        pytest.skip("geopandas is not installed")
+    square = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+    islands = MultiPolygon([Polygon([(2, 0), (3, 0), (3, 1)]), Polygon([(4, 0), (5, 0), (5, 1), (4, 1)])])
+    regions = gpd.GeoDataFrame(
+        {"name": ["mainland", "islands"], "kind": ["land", "sea"], "v": [1.0, 2.0]}, geometry=[square, islands], crs="EPSG:4326",
+    )
+    pipeline = Pipeline(source=read({"regions": regions}), table="regions")
+    view = hvPlotView(pipeline=pipeline, kind="polygons", by="kind")
+    answer = Answer(question="?", status="success", pipeline=pipeline, view=view)
+    answer.__panel__()
+    streams = [s for s in answer._streams if isinstance(s, Selection1D)]
+    assert len(streams) == 2
+    streams[1].event(index=[0])
+    assert list(answer.selection["name"]) == ["islands"] and list(answer.selection["kind"]) == ["sea"]
 
 
 def test_a_tap_on_an_hvplot_chart_selects_the_tapped_rows(frame_source):
@@ -2608,3 +2672,204 @@ def test_failed_answers_drop_exceptions_in_nested_task_groups():
     inner.out_context = {"__exception__": ValueError("boom"), "sql": "SELECT 1"}
     _drop_exceptions(TaskGroup(TaskGroup(inner, title="Inner"), title="Outer"))
     assert inner.out_context == {"sql": "SELECT 1"}
+
+
+class KeyedLLM(MockLLM):
+    """
+    Answers each question by its own text, whatever order calls arrive in,
+    and counts how many questions are planning at once.
+    """
+
+    def __init__(self, questions, fail=(), meet=0, **params):
+        super().__init__(**params)
+        self.questions = questions
+        self.fail = set(fail)
+        self.in_flight = 0
+        self.most_in_flight = 0
+        self.plans = []
+        # With meet=n, each plan call waits until n of them are in flight
+        self.meet = meet
+        self._met = asyncio.Event()
+
+    def _question(self, messages):
+        text = json.dumps(messages)
+        return next(q for q in self.questions if q in text)
+
+    async def invoke(self, messages, system="", response_model=None, **kwargs):
+        question = self._question(messages)
+        if "Plan" in getattr(response_model, "__name__", ""):
+            self.plans.append(question)
+            self.in_flight += 1
+            self.most_in_flight = max(self.most_in_flight, self.in_flight)
+            if self.in_flight == self.meet:
+                self._met.set()
+            if self.meet:
+                await asyncio.wait_for(self._met.wait(), timeout=5)
+            else:
+                await asyncio.sleep(0.05)
+            self.in_flight -= 1
+            return _plan(("ChatAgent", "Explain"))
+        if question in self.fail:
+            raise RuntimeError(f"cannot answer {question}")
+        return f"Answer to {question}"
+
+
+QUESTIONS = ["How many rows?", "Which category is largest?", "What is the total value?"]
+
+
+async def test_ask_many_answers_in_order(frame_source):
+    llm = KeyedLLM(QUESTIONS)
+    answers = await answer_module.aask_many(frame_source, QUESTIONS, llm=llm)
+    assert [a.value for a in answers] == [f"Answer to {q}" for q in QUESTIONS]
+    assert all(a.status == "success" for a in answers)
+
+
+async def test_ask_many_runs_questions_at_the_same_time(frame_source):
+    # Asked one by one, the first plan call would wait for the others and time out
+    llm = KeyedLLM(QUESTIONS, meet=3)
+    answers = await answer_module.aask_many(frame_source, QUESTIONS, llm=llm)
+    assert llm.most_in_flight == 3 and all(a.status == "success" for a in answers)
+
+
+async def test_ask_many_keeps_to_its_concurrency(frame_source):
+    llm = KeyedLLM(QUESTIONS)
+    await answer_module.aask_many(frame_source, QUESTIONS, llm=llm, concurrency=1)
+    assert llm.most_in_flight == 1
+
+
+def test_ask_many_refuses_a_concurrency_below_one(frame_source):
+    with pytest.raises(ValueError, match="at least 1"):
+        answer_module.ask_many(frame_source, QUESTIONS, llm=KeyedLLM(QUESTIONS), concurrency=0)
+
+
+def test_ask_many_refuses_a_single_string(frame_source):
+    with pytest.raises(TypeError, match="list of questions"):
+        answer_module.ask_many(frame_source, "How many rows?", llm=KeyedLLM(QUESTIONS))
+
+
+async def test_ask_many_with_no_questions_needs_no_llm(frame_source):
+    with patch("lumen.ai.answer._default_llm", side_effect=AssertionError("no LLM needed")):
+        answers = await answer_module.aask_many(frame_source, [])
+    assert answers == [] and repr(answers) == "Answers()" and answers.to_frame().empty
+
+
+async def test_ask_many_keeps_agent_classes(frame_source):
+    answers = await answer_module.aask_many(frame_source, QUESTIONS[:1], llm=KeyedLLM(QUESTIONS), agents=[ChatAgent, SQLAgent])
+    assert answers[0]._agents == [ChatAgent, SQLAgent]
+
+
+async def test_ask_many_asks_a_repeated_question_once(frame_source):
+    llm = KeyedLLM(QUESTIONS)
+    asked = [QUESTIONS[0], QUESTIONS[1], QUESTIONS[0]]
+    answers = await answer_module.aask_many(frame_source, asked, llm=llm)
+    assert sorted(llm.plans) == sorted(QUESTIONS[:2])
+    assert [a.question for a in answers] == asked and answers[0] is answers[2]
+
+
+async def test_one_failing_question_leaves_the_others(frame_source):
+    llm = KeyedLLM(QUESTIONS, fail=[QUESTIONS[1]])
+    answers = await answer_module.aask_many(frame_source, QUESTIONS, llm=llm)
+    assert [a.status for a in answers] == ["success", "error", "success"]
+
+
+async def test_ask_many_keeps_going_when_the_llm_fails_on_one_question(frame_source):
+    class PlanFails(KeyedLLM):
+        async def invoke(self, messages, system="", response_model=None, **kwargs):
+            if "Plan" in getattr(response_model, "__name__", "") and QUESTIONS[1] in json.dumps(messages):
+                raise RuntimeError("provider down")
+            return await super().invoke(messages, system=system, response_model=response_model, **kwargs)
+
+    answers = await answer_module.aask_many(frame_source, QUESTIONS, llm=PlanFails(QUESTIONS))
+    assert [a.status for a in answers] == ["success", "error", "success"]
+    assert "provider down" in answers[1].error
+
+
+async def test_ask_many_gives_each_question_its_own_agents(frame_source):
+    agents = [ChatAgent(), SQLAgent()]
+    answers = await answer_module.aask_many(frame_source, QUESTIONS[:2], llm=KeyedLLM(QUESTIONS), agents=agents)
+    first, second = (a._agents for a in answers)
+    assert not {id(a) for a in first} & {id(a) for a in second}
+    assert not {id(a) for a in first} & {id(a) for a in agents}
+
+
+async def test_ask_many_reads_a_frame_once(monkeypatch):
+    reads = []
+    real = answer_module.read
+    monkeypatch.setattr(answer_module, "read", lambda data: reads.append(data) or real(data))
+    frame = pd.DataFrame({"category": ["A", "B"], "value": [1.0, 2.0]})
+    answers = await answer_module.aask_many({"tiny": frame}, QUESTIONS, llm=KeyedLLM(QUESTIONS))
+    assert len(reads) == 1 and len({id(a.source) for a in answers}) == 1
+
+
+async def test_ask_many_counts_answers_in_the_status_line(frame_source):
+    titles = []
+
+    async def asked():
+        answer_module.step_title_callback.set(titles.append)
+        return await answer_module._ask_many(frame_source, QUESTIONS, KeyedLLM(QUESTIONS), None, None, 4)
+
+    await asyncio.create_task(asked())
+    assert titles and all(" of 3 answered" in title for title in titles)
+    assert "0 of 3 answered · Explain..." in titles and titles[-1] == "3 of 3 answered"
+
+
+async def test_interrupting_ask_many_cancels_every_question(frame_source):
+    started, ended = [], []
+
+    class SlowLLM(KeyedLLM):
+        async def invoke(self, messages, system="", response_model=None, **kwargs):
+            started.append(self._question(messages))
+            try:
+                await asyncio.sleep(30)
+            finally:
+                ended.append(asyncio.current_task().cancelling())
+
+    def interrupt_once_all_are_asking(self, title):
+        if len(started) == 3:
+            raise KeyboardInterrupt
+
+    _loop()
+    with patch.object(_StatusLine, "show", interrupt_once_all_are_asking), pytest.raises(KeyboardInterrupt):
+        answer_module.ask_many(frame_source, QUESTIONS, llm=SlowLLM(QUESTIONS))
+    await async_wait_until(lambda: len(ended) == 3)
+    assert all(ended)
+
+
+async def test_answers_table_has_a_row_per_question(frame_source):
+    answers = await answer_module.aask_many(frame_source, QUESTIONS[:2], llm=KeyedLLM(QUESTIONS))
+    table = answers.to_frame()
+    assert list(table.columns) == [
+        "question", "status", "value", "sql", "seconds", "input_tokens", "output_tokens", "cost_usd",
+    ]
+    assert table["question"].tolist() == QUESTIONS[:2] and (table["seconds"] > 0).all()
+    assert repr(answers) == "Answers(success=2)"
+
+
+async def test_answers_table_holds_typed_results(frame_source):
+    class Counting(KeyedLLM):
+        async def invoke(self, messages, system="", response_model=None, **kwargs):
+            if getattr(response_model, "__name__", "") == "Result":
+                return response_model(result=len(self._question(messages)))
+            return await super().invoke(messages, system=system, response_model=response_model, **kwargs)
+
+    answers = await answer_module.aask_many(frame_source, QUESTIONS[:2], llm=Counting(QUESTIONS), returns=int)
+    table = answers.to_frame()
+    assert table["result"].tolist() == [len(q) for q in QUESTIONS[:2]]
+    assert [a.result for a in answers] == table["result"].tolist()
+
+
+async def test_answers_show_each_question_over_its_card(frame_source):
+    answers = await answer_module.aask_many(frame_source, QUESTIONS[:2], llm=KeyedLLM(QUESTIONS))
+    html_out = answers._repr_mimebundle_()["text/html"]
+    assert html_out.index(QUESTIONS[0]) < html_out.index(QUESTIONS[1])
+    assert "Answer to Which category is largest?" in html_out
+
+
+async def test_source_and_pipeline_ask_many_delegate(frame_source):
+    pipeline = Pipeline(source=frame_source, table="tiny")
+    with patch("lumen.ai.answer.ask_many") as sync_many, patch("lumen.ai.answer.aask_many", new_callable=AsyncMock) as async_many:
+        frame_source.ask_many(["q"], llm="x", concurrency=2)
+        await pipeline.aask_many(["q"])
+    assert sync_many.call_args.args == (frame_source, ["q"])
+    assert sync_many.call_args.kwargs == {"llm": "x", "agents": None, "returns": None, "concurrency": 2}
+    assert async_many.call_args.args == (pipeline, ["q"])
