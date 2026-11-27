@@ -325,6 +325,46 @@ def resolve_exploration_source(
     raise ValueError(format_unknown_name("source", source, names))
 
 
+class ExplorationError(Exception):
+    """What the model reads in place of a result: the SQL did not parse, was not read-only or failed to run."""
+
+
+async def fetch_exploration_result(
+    source: str | None,
+    sql_query: str,
+    *,
+    sources: dict[tuple[str, str], BaseSQLSource],
+    timeout: float | None = None,
+) -> "tuple[Frame, bool]":
+    """
+    Run a read-only SQL statement as :func:`execute_exploration_sql` does
+    and return its first ``EXPLORATION_MAX_ROWS`` rows and whether it has
+    more, raising :class:`ExplorationError` with the message the model
+    should read instead.
+    """
+    try:
+        base = resolve_exploration_source(source, sources)
+    except ValueError as e:
+        raise ExplorationError(f"{e} Tables: {', '.join(sorted({t for _, t in sources}))}.") from e
+
+    try:
+        sql_clean = clean_sql(sql_query.strip(), base.dialect, prettify=False)
+        validate_read_only_sql(sql_clean, base.dialect)
+        limited = SQLLimit(limit=EXPLORATION_MAX_ROWS + 1, write=base.dialect).apply(sql_clean)
+    except (ValueError, sqlglot.errors.ParseError, sqlglot.errors.TokenError) as e:
+        raise ExplorationError(f"SQL parse/clean error: {format_error(e)}") from e
+
+    try:
+        df = await base.execute_with_timeout(limited, timeout, fetch=True)
+    except Exception as e:
+        raise ExplorationError(format_error(e)) from e
+
+    # A pyarrow Table has no .head(); narwhals gives every backend one.
+    frame = as_narwhals(df)
+    capped = len(frame) > EXPLORATION_MAX_ROWS
+    return (frame.head(EXPLORATION_MAX_ROWS) if capped else frame), capped
+
+
 async def execute_exploration_sql(
     source: str | None,
     sql_query: str,
@@ -356,26 +396,10 @@ async def execute_exploration_sql(
         Tabular preview, or an error message string if execution fails.
     """
     try:
-        base = resolve_exploration_source(source, sources)
-    except ValueError as e:
-        return f"{e} Tables: {', '.join(sorted({t for _, t in sources}))}."
-
-    try:
-        sql_clean = clean_sql(sql_query.strip(), base.dialect, prettify=False)
-        validate_read_only_sql(sql_clean, base.dialect)
-        limited = SQLLimit(limit=EXPLORATION_MAX_ROWS + 1, write=base.dialect).apply(sql_clean)
-    except (ValueError, sqlglot.errors.ParseError, sqlglot.errors.TokenError) as e:
-        return f"SQL parse/clean error: {format_error(e)}"
-
-    try:
-        df = await base.execute_with_timeout(limited, timeout, fetch=True)
-    except Exception as e:
-        return format_error(e)
-
-    # A pyarrow Table has no .head(); narwhals gives every backend one.
-    frame = as_narwhals(df)
-    capped = len(frame) > EXPLORATION_MAX_ROWS
-    return format_exploration_result(frame.head(EXPLORATION_MAX_ROWS) if capped else frame, capped=capped)
+        frame, capped = await fetch_exploration_result(source, sql_query, sources=sources, timeout=timeout)
+    except ExplorationError as e:
+        return str(e)
+    return format_exploration_result(frame, capped=capped)
 
 
 def _known_columns(metaset: Metaset | None, source: BaseSQLSource, table: str) -> list[str]:
