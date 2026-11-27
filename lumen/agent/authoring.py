@@ -38,12 +38,13 @@ from ._graph import (
     DIVIDER_ID, HEADING_ID, MARKDOWN_ID, TEXT_FIELDS,
 )
 from .data import (
-    _sources_by_name, lint, resolve_source, source_output,
+    _sources_by_name, lint, resolve_source, result_notes, source_output,
 )
 from .edits import (
     PATCH_DEPTH, changed_layers, depth, kind, merge_chart_layers, merge_patch,
     name_notes, patch_problem, unrelated, view_summary,
 )
+from .facts import answer_notes
 
 try:
     from panel_flowdash.agent import ExplorationOps
@@ -203,7 +204,7 @@ async def _add_follower(ops, upstreams: list[str], src: Any, name: str, sql: str
     return (
         f"Placed SQL node {name!r} on the result{'s' * (len(upstreams) > 1)} of {read}{capped}.{notes} "
         f"{format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
-    )
+    ) + _notes(await result_notes(src, sql, frame))
 
 
 def _view_problems(ops, name: str) -> list[str]:
@@ -282,7 +283,7 @@ async def add_sql(ctx: RunContext[FlowDashDeps], source: str | list[str], name: 
         raise
     capped = f" (capped at {limit} rows)" if len(frame) >= limit else ""
     return (f"Placed SQL node {name!r}{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
-            + _sql_notes(ops, name))
+            + _notes(await result_notes(src, sql, frame)) + _sql_notes(ops, name))
 
 
 def _sql_notes(ops, name: str) -> str:
@@ -338,7 +339,7 @@ async def _change_sql(ctx: RunContext[FlowDashDeps], source: str | list[str], na
     capped = f" (capped at {limit} rows)" if len(frame) >= limit else ""
     problems = "".join(f"\n\n{problem}" for problem in await _follower_problems(ops, target))
     return (f"Changed SQL node {target!r}{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
-            f"{problems}" + _sql_notes(ops, target))
+            f"{problems}" + _notes(await result_notes(src, sql, frame)) + _sql_notes(ops, target))
 
 
 def place_view(ctx: RunContext[FlowDashDeps], component: str, data: str, name: str,
@@ -446,7 +447,8 @@ async def add_metric(
     ceiling = effective_limit(ops.editor, None)
     capped = f" (capped at {ceiling} rows)" if len(frame) >= ceiling else ""
     verb = "Changed" if existing else "Placed"
-    return f"{verb} metric node {target!r}{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
+    return (f"{verb} metric node {target!r}{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
+            + _notes(answer_notes(frame)))
 
 
 def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any]) -> str:
@@ -899,6 +901,7 @@ class CheckedConfig(AbstractCapability[FlowDashDeps]):
             raise ModelRetry(f"{exc}{copied}") from exc
         capped = f" (capped at {limit} rows)" if len(frame) >= limit else ""
         preview = f"\n\nResult{capped}: {format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
+        preview += _notes(await result_notes(src, sql, frame))
         preview += "".join(f"\n\n{problem}" for problem in await _follower_problems(ops, target))
         if isinstance(result, str):
             return result + preview

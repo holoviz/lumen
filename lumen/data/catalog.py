@@ -154,6 +154,8 @@ class Metaset:
     docs: list[DocumentChunk] | None = None
     schema_tables: list[str] | None = None
     stats: dict[str, TableStats] = field(default_factory=dict)
+    #: Lines a caller adds under a table's header, by table slug, e.g. what one row is.
+    notes: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def has_schemas(self) -> bool:
@@ -356,6 +358,8 @@ class Metaset:
         if include_sql and entry.sql_expr:
             sql = " ".join(entry.sql_expr.split())
             lines.append(f"  read_with: {truncate_string(sql, max_length=200) if truncate else sql}")
+        if detail != "names":
+            lines += [f"  {note}" for note in self.notes.get(table_slug, ())]
 
         catalog_cols = {col.name: col for col in entry.columns}
         if stats is not None and stats.columns:
