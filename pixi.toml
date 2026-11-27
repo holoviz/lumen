@@ -150,9 +150,9 @@ nbsite = ">=0.10.0a0"
 [feature.doc.tasks]
 # Updated tasks to use zensical instead of mkdocs
 _docs-build-site = { cmd = 'zensical build --clean', depends-on = ['install'] }
-# llms.txt is written into builtdocs, so it has to run after --clean has wiped it.
-_docs-markdown = 'python -m nbsite build-llms --config scripts/llms_config.py'
-docs-build = { depends-on = ['_docs-build-site', '_docs-markdown'] }
+# The markdown mirror, llms.txt and llms-full.txt, after the site build's --clean
+_docs-markdown = { cmd = 'python -m nbsite build-llms --config scripts/llms_config.py && python scripts/llms_config.py', depends-on = ['_docs-build-site'] }
+docs-build = { depends-on = ['_docs-markdown'] }
 docs-serve = { cmd = 'zensical serve', depends-on = ['install'] }
 docs-clean = { cmd = 'rm -rf builtdocs', depends-on = ['install'] }
 
