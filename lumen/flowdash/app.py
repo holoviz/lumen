@@ -24,6 +24,7 @@ from panel_flowdash.project import _parse
 
 from ..sources.base import Source
 from ..sources.data import PROVIDED_SOURCE_NAME
+from .analysis import ANALYSES_KEY
 from .catalog import CATALOG_KEY, ProjectCatalog
 from .data_section import (
     SECTION_ID as DATA_SECTION_ID, data_section, redirect_moved_admin_pages,
@@ -337,6 +338,7 @@ def build_routes(
     agent_model: str | Sequence[str] | None = None,
     project: str | os.PathLike | Project | None = None,
     title: str = "Lumen",
+    analyses: Mapping[str, Any] | Sequence[Any] | None = None,
     upload_handlers: Mapping[str, Any] | None = None,
     upload_dir: str | os.PathLike | None = None,
     **params: Any,
@@ -367,6 +369,9 @@ def build_routes(
         served is left out with a warning.
     title
         The app's title.
+    analyses
+        Host-registered Lumen ``Analysis`` subclasses or instances (a mapping by
+        name or a sequence) available to ``Lumen/analysis`` nodes and the agent.
     upload_handlers
         Readers of further file types people may upload, by extension, e.g.
         ``{"h5ad": upload_h5ad}``, each ``handler(context, file, alias,
@@ -422,6 +427,8 @@ def build_routes(
         **editor_options.get("context", {}), SOURCES_KEY: sources, SOURCE_ALIASES_KEY: aliases,
         UPLOADS_KEY: uploads, DESCRIPTIONS_KEY: descriptions,
     }
+    if analyses is not None:
+        context[ANALYSES_KEY] = analyses
     if project is None:
         project = _working_project(context)
     elif not isinstance(project, Project):

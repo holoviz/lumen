@@ -21,6 +21,11 @@ from .access import (
     attach_access, authorized_metrics, authorized_sources, authorized_tables,
     can_access_metric, can_access_source, can_access_table,
 )
+from .analysis import (
+    ANALYSES_KEY, ANALYSIS_ID, AnalysisNode, AnalysisResult, bind_analysis,
+    bound_analyses, check_analysis_config, host_analyses, missing_analysis,
+    run_analysis, unbind_analysis,
+)
 from .catalog import (
     CATALOG_KEY, Catalog, ProjectCatalog, assistant_tables, hidden_tables,
 )
@@ -62,6 +67,7 @@ from .uploads import (
 COMPONENTS.update(TRANSFORM_COMPONENTS)
 COMPONENTS[TABLE_VIEW_ID] = TableViewNode
 COMPONENTS[DECKGL_ID] = DeckGLNode
+COMPONENTS[ANALYSIS_ID] = AnalysisNode
 
 # "Save as metric…" in FlowDash's node menus, for admins.
 register_action()
@@ -72,6 +78,8 @@ __flowdash_components__ = COMPONENTS
 
 __all__ = [
     "AGGREGATE_ID",
+    "ANALYSES_KEY",
+    "ANALYSIS_ID",
     "CATALOG_KEY",
     "COMPONENTS",
     "DATA_ID",
@@ -102,6 +110,8 @@ __all__ = [
     "UPLOADS_KEY",
     "VIEW_ID",
     "AggregateNode",
+    "AnalysisNode",
+    "AnalysisResult",
     "Catalog",
     "CheckDiagnostic",
     "DataNode",
@@ -129,11 +139,14 @@ __all__ = [
     "authorized_metrics",
     "authorized_sources",
     "authorized_tables",
+    "bind_analysis",
     "bind_source",
+    "bound_analyses",
     "bound_sources",
     "can_access_metric",
     "can_access_source",
     "can_access_table",
+    "check_analysis_config",
     "check_chart",
     "check_columns",
     "check_deckgl",
@@ -158,11 +171,13 @@ __all__ = [
     "global_conditions",
     "globally_filtered",
     "hidden_tables",
+    "host_analyses",
     "host_metrics",
     "host_sources",
     "listed_tables",
     "lookup_source",
     "metric_pipeline",
+    "missing_analysis",
     "missing_source",
     "pipeline_columns",
     "pipeline_sql",
@@ -173,12 +188,14 @@ __all__ = [
     "register_view",
     "result_sql",
     "row_ceiling",
+    "run_analysis",
     "selection_conditions",
     "selection_warnings",
     "set_row_ceiling",
     "spec_param",
     "table_pipeline",
     "transformed_pipeline",
+    "unbind_analysis",
     "unbind_source",
     "upload_formats",
 ]
