@@ -180,7 +180,7 @@ async def metaset(source: Source, tables: list[str] | None = None) -> Metaset:
     metadata revision.
     """
     tables_key = tuple(listed_tables(source) if tables is None else tables)
-    revision = getattr(source, "_metadata_revision", 0)
+    revision = source._metadata_revision
     cached = _METASETS.get(source)
     if cached is None or cached[0] != tables_key or cached[1] != revision:
         slugs = [f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}" for table in tables_key]

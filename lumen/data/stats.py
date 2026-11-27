@@ -40,8 +40,9 @@ import uuid
 import weakref
 
 from collections import OrderedDict
+from collections.abc import Sequence
 from concurrent.futures import (
-    ThreadPoolExecutor, TimeoutError as FutureTimeout,
+    Future, ThreadPoolExecutor, TimeoutError as FutureTimeout,
 )
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -1842,10 +1843,14 @@ class TableStatsStore(param.Parameterized):
             self._budgets.clear()
             self._slots.clear()
 
-    def invalidate(self, source: Source, table: str | None = None) -> None:
+    def invalidate(
+        self, source: Source, table: str | None = None, *, tables: Sequence[str] = ()
+    ) -> None:
         """
         Drop cached statistics (in memory and on disk) for ``table`` of
-        ``source``, or for every table of ``source`` when ``table`` is None.
+        ``source``, or for every table of ``source`` when ``table`` is None:
+        those in memory and those named in ``tables``, whose entries may be
+        on disk only. The source is not queried.
         """
         try:
             adapter = self._adapter(source)
@@ -1865,25 +1870,13 @@ class TableStatsStore(param.Parameterized):
                 if k[0] == identity and (table is None or k[1] == table)
             ]:
                 del self._tasks[key]
-        if table is not None:
+        for tbl in [table] if table is not None else tables:
             try:
-                exact_key = (identity, table, adapter.definition(table))
+                exact_key = (identity, tbl, adapter.definition(tbl))
             except Exception:
-                exact_key = None
-            if exact_key is not None and exact_key not in removed:
+                continue
+            if exact_key not in removed:
                 removed.append(exact_key)
-        else:
-            try:
-                tables = list(source.get_tables())
-            except Exception:
-                tables = []
-            for tbl in tables:
-                try:
-                    exact_key = (identity, tbl, adapter.definition(tbl))
-                except Exception:
-                    continue
-                if exact_key not in removed:
-                    removed.append(exact_key)
         for key in removed:
             path = self._path(key)
             if path is not None:
@@ -2099,6 +2092,21 @@ class TableStatsStore(param.Parameterized):
         if path is not None and stats.method != TYPES_ONLY:
             self._persist(path, stats)
         return stats
+
+    def compute_within(self, source: Source, table: str, timeout: float) -> tuple[TableStats | None, Future | None]:
+        """
+        Compute (or load) statistics, waiting at most ``timeout`` seconds.
+        Returns the statistics, or None and the future of the computation,
+        which keeps running on the profiling pool and caches its result.
+        A thread-bound source is computed in the calling thread.
+        """
+        if self._adapter(source).thread_bound:
+            return self.compute(source, table), None
+        future = _PROFILE_EXECUTOR.submit(self.compute, source, table)
+        try:
+            return future.result(timeout=timeout), None
+        except FutureTimeout:
+            return None, future
 
     def _async_slot(self, identity: str) -> asyncio.Semaphore:
         loop = asyncio.get_running_loop()
