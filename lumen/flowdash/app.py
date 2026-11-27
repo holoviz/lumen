@@ -394,6 +394,10 @@ def build_routes(
         agent: Any = create_agent(
             default, dashboard_tools="layout", **({"defer_model_check": True} if len(models) > 1 else {})
         )
+        if "agent_report_context" in FlowDashApp.param:
+            from ..agent.report import report_context
+
+            params.setdefault("agent_report_context", report_context)
         params.setdefault("agent_model", default)
         params.setdefault("agent_models", models)
         # Explore builds follow-ups on earlier answers with Lumen's tools; the drawer edits them in place.

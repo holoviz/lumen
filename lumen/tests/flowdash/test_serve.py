@@ -120,6 +120,19 @@ def test_agent_model_gives_the_app_lumens_agent(csv):
     assert {"list_tables", "add_sql", "add_chart"} <= tools
 
 
+def test_agent_model_gives_get_report_lumens_context(csv):
+    pytest.importorskip("pydantic_ai")
+    from panel_flowdash.app import FlowDashApp
+
+    app = build_routes([str(csv)], db_path=csv.parent / "dash.db", agent_model="test")["/"]()
+    if "agent_report_context" not in FlowDashApp.param:
+        assert not hasattr(app, "agent_report_context")
+        return
+    from lumen.agent.report import report_context
+
+    assert app.agent_report_context is report_context
+
+
 def test_repeated_agent_model_flags_reach_the_app(csv):
     args = parse(
         str(csv), "--flowdash", "--db-path", str(csv.parent / "dash.db"),

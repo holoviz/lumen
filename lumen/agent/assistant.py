@@ -29,7 +29,7 @@ from .data import data_toolset
 from .edits import KeepTileSlots, add_dashboard_state
 from .explore import OwnNodesOnly
 from .history import stub_superseded_lookups
-from .report import HAS_REPORTS, REPORT_READ_TOOLS, report_toolset
+from .report import HAS_REPORT_HOOKS, REPORT_INSTRUCTIONS
 from .tool_calls import FlowDashToolCalls
 
 # The instructions stay the same for a whole conversation and for every
@@ -213,28 +213,6 @@ Place a Lumen/source node only when several tables or SQL nodes need the same so
 and then connect it to their source inputs instead of setting ref.
 """
 
-# Added for an agent with report_toolset(). Follows the story patterns of lumen/ai/story.py
-# (narrative arc, grounding only in node data, describing figures by what they show) adapted
-# to FlowDash reports, where prose uses live {{ node.port }} placeholders instead of typed numbers.
-REPORT_INSTRUCTIONS = """
-## Writing reports
-Prose about a dashboard (a summary, narrative or commentary around charts and tables) goes in
-its report, not in add_text tiles unless the user asks for text on the dashboard itself.
-- Start with describe_report to see the report's blocks, revision and each node's data summary
-  and placeholder addresses.
-- Use add_report_prose to insert a prose paragraph or section heading (at top/bottom or before/after
-  a node or block), edit_report_prose to rewrite a paragraph, heading, caption or title in place,
-  and write_report to draft or restructure a whole narrative interleaving prose and visuals.
-- Open a narrative with a short lead-in on what the report covers, then alternate prose and
-  visuals in reading order. Refer to figures by what they show, never by internal node or SQL
-  names, and follow any tone or angle the user asks for. When rewriting a paragraph, keep
-  accurate facts and a similar length unless asked otherwise.
-- Ground every claim in the nodes' outputs; bind live numbers from upstream SQL, metric or data
-  nodes with {{ node.value }}, {{ node.data.column }}, {{ node.data.column[i] }} or
-  {{#each node.data limit=5}}...{{/each}} (charts, tables and KPI cards have no data outputs of
-  their own). Put sorting, filtering and totals in a SQL or metric node first.
-"""
-
 # Added for an agent that places tiles, i.e. with the place_tile tool, which also gets add_kpi
 # and add_filter_control.
 LAYOUT_INSTRUCTIONS = """
@@ -249,7 +227,6 @@ LOCAL_FILTER = ("Add a filter, dropdown or slider the user asks for with add_fil
                 "it filters the views you list, or every view reading that node.")
 
 _FLOWDASH_TOOL_NAMES = {tool.__name__ for tool in FLOWDASH_TOOLS}
-_FLOWDASH_REPORT_TOOLS = frozenset(getattr(_flowdash_tools, "REPORT_TOOLS", ()))
 # FlowDash releases before arrange_tiles have no tool to lay all tiles out again.
 HAS_ARRANGE_TILES = "arrange_tiles" in _FLOWDASH_TOOL_NAMES
 # FlowDash releases before add_filter have no tool for the global filter bar.
@@ -383,7 +360,7 @@ DATA_DASHBOARD_TOOLS = DASHBOARD_TOOLS["data"]
 def create_agent(model: Any = None, *, instructions: str | None = None, model_settings: dict[str, Any] | None = None,
                  dashboard_tools: str | Collection[str] | None = "data",
                  dashboard_instructions: bool | None = None, base_instructions: str = INSTRUCTIONS,
-                 shape_check: bool = False, report_tools: bool | None = None,
+                 shape_check: bool = False,
                  **kwargs: Any) -> Agent[FlowDashDeps, str]:
     """
     The FlowDash agent with Lumen's data and authoring toolsets.
@@ -427,11 +404,6 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
         changed a SQL node back once, asking the agent to check the
         result's columns and rows against the question. Off by default
         until a live comparison on the current agent supports it.
-    report_tools
-        Whether to add Lumen's report prose toolset (``report_toolset``) and
-        report writing instructions. By default enabled when laying out a
-        dashboard (``dashboard_tools="layout"`` or ``None``) or when
-        ``dashboard_tools`` includes FlowDash report tools.
     **kwargs
         Passed on to ``panel_flowdash.agent.create_agent``.
     """
@@ -439,21 +411,12 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
     if isinstance(dashboard_tools, str):
         dashboard_tools = DASHBOARD_TOOLS[dashboard_tools]
     lays_out = dashboard_tools is None or "place_tile" in dashboard_tools
-    has_report = HAS_REPORTS and (
-        report_tools if report_tools is not None
-        else (lays_out or (dashboard_tools is not None and any(name in _FLOWDASH_REPORT_TOOLS for name in dashboard_tools)))
-    )
     data, authoring = data_toolset(), authoring_toolset()
-    own = [
-        data, authoring,
-        *([controls_toolset()] if lays_out else []),
-        *([report_toolset()] if has_report else []),
-    ]
+    own = [data, authoring, *([controls_toolset()] if lays_out else [])]
     toolsets = [*own, *kwargs.pop("toolsets", [])]
     text = base_instructions + (f"\n{instructions}" if instructions else "")
-    editing = [name for toolset in own[1:] for name in toolset.tools if name not in REPORT_READ_TOOLS]
-    all_own = [name for toolset in own for name in toolset.tools]
-    calls = FlowDashToolCalls(all_own, editing=editing)
+    editing = [name for toolset in own[1:] for name in toolset.tools]
+    calls = FlowDashToolCalls([*data.tools, *editing], editing=editing)
     # Capabilities given here wrap the tools outside CheckedConfig, so e.g. a refusal comes before a test run.
     capabilities = [
         ProcessHistory(stub_superseded_lookups), ProcessHistory(add_dashboard_state), calls,
@@ -467,7 +430,7 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
         dashboard_instructions = dashboard_tools is None
     if dashboard_tools is None or "add_node" in dashboard_tools:
         text += SELECTION_INSTRUCTIONS + TABLE_INSTRUCTIONS
-    if has_report:
+    if HAS_REPORT_HOOKS and (dashboard_tools is None or {"edit_report", "set_report"} & set(dashboard_tools)):
         text += REPORT_INSTRUCTIONS
     if dashboard_tools is not None and "place_tile" in dashboard_tools:
         arrange = " arrange_tiles does that, keeping place_tile sizes." if "arrange_tiles" in dashboard_tools else ""
