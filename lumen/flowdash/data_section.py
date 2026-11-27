@@ -40,6 +40,16 @@ _WIDE = 900
 # The admin view's sections that moved here, by the Data page each leads to.
 MOVED = {"catalog": f"/{ROUTE}", "metrics": f"/{ROUTE}/metrics"}
 
+
+def moved_admin_pages() -> dict[str, str]:
+    """Admin view sections relocated into the Data section, by target Data URL."""
+    from .mcp import mcp_supported
+
+    moved = dict(MOVED)
+    if mcp_supported():
+        moved["mcp"] = f"/{ROUTE}/integrations"
+    return moved
+
 _NAV_SX = {
     "py": 0,
     "& .MuiListItemButton-root": {"pl": "21px", "pr": 2, "py": 0.75, "borderLeft": "3px solid transparent"},
@@ -174,7 +184,9 @@ class DataPage(Viewer):
             can_access_metric, can_access_source, can_access_table,
         )
         from .data import data_roots
+        from .mcp import mcp_supported, visible_mcp_servers
 
+        self._has_mcp = mcp_supported()
         raw_tables, _ = catalog_tables(self.context, section)
         tables = [
             entry for entry in raw_tables
@@ -189,11 +201,14 @@ class DataPage(Viewer):
             status for status in statuses
             if can_access_metric(status, self.context, app=self.app)
         ]
+        self.integrations = visible_mcp_servers(project, self.app, admin=self.admin) if self._has_mcp else []
         self.n_tables = len(tables)
         if self.page == "metrics":
             content = self._metrics_page()
         elif self.page == "metric":
             content = self._metric_page("/".join(parts[1:]))
+        elif self.page == "integrations" and self._has_mcp:
+            content = self._integrations_page()
         else:
             self.page = "tables"
             content = self._tables_page(query)
@@ -216,9 +231,11 @@ class DataPage(Viewer):
     # The nav
 
     def _summary(self) -> str:
-        if not self.sources and not self.statuses:
+        if not self.sources and not self.statuses and not self.integrations:
             return "No data yet"
         parts = [(len(self.sources), "source"), (self.n_tables, "table"), (len(self.statuses), "metric")]
+        if self.integrations:
+            parts.append((len(self.integrations), "integration"))
         return " · ".join(f"{n} {noun}{'' if n == 1 else 's'}" for n, noun in parts)
 
     def _footer(self) -> str:
@@ -232,13 +249,27 @@ class DataPage(Viewer):
         return "Admins add sources and define metrics. Adding files is open to some people in this app."
 
     def _nav(self, source: str | None) -> pn.Column:
+        nav_items = [
+            {"label": "Tables", "icon": "table_chart", "secondary": str(self.n_tables), "url": f"/{ROUTE}"},
+            {"label": "Metrics", "icon": "functions", "secondary": str(len(self.statuses)),
+             "url": f"/{ROUTE}/metrics"},
+        ]
+        if self._has_mcp:
+            nav_items.append(
+                {"label": "Integrations", "icon": "extension", "secondary": str(len(self.integrations)),
+                 "url": f"/{ROUTE}/integrations"}
+            )
+        if self.page in ("metrics", "metric"):
+            active: tuple[int, ...] | None = (1,)
+        elif self.page == "integrations" and self._has_mcp:
+            active = (2,)
+        elif not source:
+            active = (0,)
+        else:
+            active = None
         pages = pmui.MenuList(
-            items=[
-                {"label": "Tables", "icon": "table_chart", "secondary": str(self.n_tables), "url": f"/{ROUTE}"},
-                {"label": "Metrics", "icon": "functions", "secondary": str(len(self.statuses)),
-                 "url": f"/{ROUTE}/metrics"},
-            ],
-            active=(1,) if self.page in ("metrics", "metric") else ((0,) if not source else None),
+            items=nav_items,
+            active=active,
             dense=False, margin=0, sizing_mode="stretch_width", sx=_NAV_SX, css_classes=["lumen-data-nav"],
         )
         pages.on_click(lambda item: self.navigate(item["url"]))
@@ -279,10 +310,15 @@ class DataPage(Viewer):
         )
 
     def _narrow_nav(self) -> pn.Row:
-        """Tables and Metrics as buttons above the page, where the screen has no room for the section's nav."""
+        """Tables, Metrics and Integrations as buttons above the page on narrow screens."""
+        entries = [
+            ("Tables", f"/{ROUTE}", self.page == "tables"),
+            ("Metrics", f"/{ROUTE}/metrics", self.page in ("metrics", "metric")),
+        ]
+        if self._has_mcp:
+            entries.append(("Integrations", f"/{ROUTE}/integrations", self.page == "integrations"))
         buttons = []
-        for label, url, current in (("Tables", f"/{ROUTE}", self.page == "tables"),
-                                    ("Metrics", f"/{ROUTE}/metrics", self.page in ("metrics", "metric"))):
+        for label, url, current in entries:
             button = pmui.Button(label=label, variant="contained" if current else "outlined", size="small", margin=0)
             button.on_click(lambda _event, url=url: self.navigate(url))
             buttons.append(button)
@@ -489,6 +525,31 @@ class DataPage(Viewer):
         )
         return self.metric
 
+    # ------------------------------------------------------------------
+    # Integrations (MCP servers)
+
+    def _integrations_page(self) -> pn.Column:
+        from .mcp import integrations_view
+
+        self.integrations_view = integrations_view(
+            self.project,
+            app=self.app,
+            editable=self.admin,
+            on_change=lambda: self.navigate(f"/{ROUTE}/integrations"),
+        )
+        add = pmui.Button(
+            label="Add server", icon="add", variant="contained", margin=0, visible=self.admin,
+            css_classes=["lumen-data-add-mcp"],
+        )
+        add.on_click(lambda _event: self.integrations_view.open_server(None))
+        description = (
+            "External MCP tool servers connected to the assistant. Tools require approval by default unless "
+            "allowed per server." if self.admin else
+            "External MCP tool servers connected to the assistant. Admins configure servers, approvals and access."
+        )
+        heading = _heading("Integrations", description, add)
+        return self._content(heading, self.integrations_view)
+
     def __panel__(self):
         return self._layout
 
@@ -513,7 +574,8 @@ def redirect_moved_admin_pages(app: t.Any) -> None:
         return
 
     def admin_view(pathname: str) -> t.Any:
-        target = MOVED.get(pathname.strip("/").split("/", 1)[-1]) if pathname.strip("/").count("/") == 1 else None
+        moved = moved_admin_pages()
+        target = moved.get(pathname.strip("/").split("/", 1)[-1]) if pathname.strip("/").count("/") == 1 else None
         if target is None:
             return show_admin(pathname)
         doc = pn.state.curdoc

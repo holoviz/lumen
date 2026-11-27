@@ -28,7 +28,8 @@ from .analysis import ANALYSES_KEY, ANALYSIS_ID
 from .catalog import CATALOG_KEY, ProjectCatalog
 from .contracts import METRIC_ID
 from .data_section import (
-    SECTION_ID as DATA_SECTION_ID, data_section, redirect_moved_admin_pages,
+    ROUTE as DATA_ROUTE, SECTION_ID as DATA_SECTION_ID, data_section,
+    redirect_moved_admin_pages,
 )
 from .metadata import DESCRIPTIONS_KEY
 from .metrics import (
@@ -446,6 +447,8 @@ def build_routes(
     uploads.project = project
     editor_options["context"] = context
     data = _with_data_section(params)
+    if data:
+        _with_mcp_redirect(params)
     routes = FlowDashApp.build_routes(
         project_dir=str(Path.cwd()),
         registry={},
@@ -479,6 +482,21 @@ def _with_data_section(params: dict[str, Any]) -> bool:
     return True
 
 
+def _with_mcp_redirect(params: dict[str, Any]) -> bool:
+    """
+    Relocate panel-flowdash's ``/admin/mcp`` section into the Data section's
+    Integrations page when both the Data section and MCP support are active.
+    """
+    from .mcp import mcp_supported
+
+    if not mcp_supported() or "admin_section_redirects" not in FlowDashApp.param:
+        return False
+    redirects = dict(params.get("admin_section_redirects") or {})
+    redirects.setdefault("mcp", f"/{DATA_ROUTE}/integrations")
+    params["admin_section_redirects"] = redirects
+    return True
+
+
 def _lumen_session(factory: Any, uploads: Uploads | None = None, data: bool = False) -> Any:
     """
     ``factory`` marking each session it serves as a Lumen app's, which shows
@@ -497,8 +515,10 @@ def _lumen_session(factory: Any, uploads: Uploads | None = None, data: bool = Fa
             serve_data(pn.state.curdoc)
         app = factory(*args, **kwargs)
         from .access import attach_access
+        from .mcp import attach_mcp_access
 
         attach_access(app)
+        attach_mcp_access(app)
         require_tool_approval(app)
         if data:
             redirect_moved_admin_pages(app)
