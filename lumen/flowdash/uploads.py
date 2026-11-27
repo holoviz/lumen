@@ -554,10 +554,9 @@ def _has_identity(app: t.Any) -> bool:
 
 
 def _is_admin(app: t.Any) -> bool:
-    try:
-        return app is not None and bool(app._still_admin())
-    except Exception:
-        return False
+    from .access import is_admin
+
+    return is_admin(app)
 
 
 def _is_uploader(app: t.Any, upload: Upload) -> bool:

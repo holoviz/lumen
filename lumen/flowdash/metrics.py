@@ -68,10 +68,12 @@ from typing import Any, ClassVar
 import param
 import sqlglot
 
+from panel_flowdash.auth import Permission
 from sqlglot import exp
 
 from ..sources.base import BaseSQLSource, Source
 from ..transforms.sql import NO_BOOLEAN_LITERALS, MetricAggregate, SQLPreFilter
+from .access import parse_access
 from .project import (
     Problem, Project, ProjectError, ProjectSection, Section, register_section,
 )
@@ -100,7 +102,7 @@ _D3_FORMAT = re.compile(r"(?:.?[<>=^])?[-+( ]?[$#]?0?\d*,?(?:\.\d+)?~?[eEfgGrsop
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _TYPE = re.compile(r"(list|range)\[(\w+)\]|(\w+)")
 
-_METRIC_KEYS = {"description", "source", "table", "sql", "measures", "dimensions", "parameters"}
+_METRIC_KEYS = {"description", "source", "table", "sql", "measures", "dimensions", "parameters", "access"}
 _MEASURE_KEYS = {"expr", "format", "description"}
 _DIMENSION_KEYS = {"column", "expr", "type", "grains", "format", "description"}
 _PARAMETER_KEYS = {"type", "default", "required", "bounds", "options", "description", "column", "op"}
@@ -315,6 +317,7 @@ class Metric:
     measures: dict[str, Measure] = field(default_factory=dict)
     dimensions: dict[str, Dimension] = field(default_factory=dict)
     parameters: dict[str, Parameter] = field(default_factory=dict)
+    access: Permission = field(default_factory=Permission)
 
     @property
     def form(self) -> str:
@@ -599,11 +602,13 @@ class _Reader:
         for clash in set(parameters) & set(dimensions):
             self.fail((*path, "parameters", clash),
                       f"Parameter {clash!r} has the name of a dimension, which filters by that name already.")
+        access, access_problems = parse_access(spec.get("access"), self.section, (*path, "access"))
+        self.problems.extend(access_problems)
         if sql is not None:
             self.check_sql(sql, parameters, (*path, "sql"), spec.get("parameters") or {})
         if len(self.problems) > before:
             return None
-        return Metric(name, source, description, table, sql, measures, dimensions, parameters)
+        return Metric(name, source, description, table, sql, measures, dimensions, parameters, access=access)
 
     def measures(self, spec: Any, path: tuple) -> dict[str, Measure]:
         spec = self.mapping(spec or {}, path, "measures")
