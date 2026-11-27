@@ -7,7 +7,7 @@ import warnings
 
 from collections.abc import Callable
 from inspect import Signature, signature
-from types import FunctionType
+from types import FunctionType, UnionType
 from typing import (
     Any, Literal, TypeVar, Union, get_args, get_origin,
 )
@@ -16,7 +16,7 @@ import param
 
 from griffe import Docstring, DocstringSectionKind
 from pydantic import (
-    BaseModel, ConfigDict, Field, PrivateAttr, create_model,
+    BaseModel, ConfigDict, Field, PrivateAttr, create_model, model_validator,
 )
 from pydantic._internal import _typing_extra
 from pydantic.fields import FieldInfo, PydanticUndefined
@@ -123,6 +123,43 @@ _docstring_style_patterns: list[tuple[str, list[str], DocstringStyle]] = [
 
 class ArbitraryTypesModel(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+def _takes_list(annotation: Any) -> bool:
+    """Whether a field's type allows a list, alone or in a union."""
+    origin = get_origin(annotation)
+    return annotation is list or origin is list or (origin in (Union, UnionType) and any(_takes_list(arg) for arg in get_args(annotation)))
+
+
+class UnwrappedValues(BaseModel):
+    """
+    A response model that takes a field's value however some models wrap
+    it: a one-item list where one value is expected, a content block such
+    as {"type": "text", "text": value}, or {value: value}. A list of several
+    values, or none, where one is expected fails with a message asking for
+    one. Without this the same wrapped reply fails validation on every retry.
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _unwrap(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        unwrapped = {}
+        for key, value in data.items():
+            field = cls.model_fields.get(key)
+            if isinstance(value, dict) and len(value) == 2 and "type" in value and ({"value", "text"} & set(value)):
+                value = value.get("value", value.get("text"))
+            elif isinstance(value, dict) and len(value) == 1 and next(iter(value.items()))[0] == next(iter(value.values())):
+                # {"polygons": "polygons"}
+                value = next(iter(value))
+            if field is not None and isinstance(value, list) and not _takes_list(field.annotation):
+                if len(value) != 1:
+                    # Often every allowed option at once; say so, or the retry repeats it
+                    raise ValueError(f"{key!r} takes one value, not a list of {len(value)}; choose the one that fits.")
+                value = value[0]
+            unwrapped[key] = value
+        return unwrapped
 
 
 def _create_literal(obj: list[str | type]) -> type:

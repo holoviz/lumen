@@ -155,7 +155,7 @@ Context: No local weather table; `SourceLookup`, `SourceAgent`, and `ChatAgent` 
     {%- set _ = missing_reqs.append(req) %}
   {%- endif %}
 {%- endfor %}
-### `{{ tool.__class__.__name__ }}` {%- if missing_reqs %} — Blocked, requires: `{{ missing_reqs | join('`, `') }}`
+### `{{ tool | normalized_name }}` {%- if missing_reqs %} — Blocked, requires: `{{ missing_reqs | join('`, `') }}`
 {%- else %} — Ready
 {%- endif %}
 {{ ' '.join(dedent(tool.purpose).strip().split()) }}
@@ -175,17 +175,17 @@ Conditions for use:
     {%- set _ = missing_reqs.append(req) %}
   {%- endif %}
 {%- endfor %}
-### `{{ agent.__class__.__name__ }}` {%- if missing_reqs %} — Blocked, requires: `{{ missing_reqs | join('`, `') }}`
+### `{{ agent | normalized_name }}` {%- if missing_reqs %} — Blocked, requires: `{{ missing_reqs | join('`, `') }}`
   {%- set providers = [] %}
   {%- for req in missing_reqs %}
     {%- for tool in tools %}
       {%- if req in tool.output_schema.__annotations__ %}
-        {%- set _ = providers.append(tool.__class__.__name__) %}
+        {%- set _ = providers.append(tool | normalized_name) %}
       {%- endif %}
     {%- endfor %}
     {%- for other_agent in agents %}
       {%- if req in other_agent.output_schema.__annotations__ %}
-        {%- set _ = providers.append(other_agent.name[:-5]) %}
+        {%- set _ = providers.append(other_agent | normalized_name) %}
       {%- endif %}
     {%- endfor %}
   {%- endfor %}
@@ -320,7 +320,7 @@ Failed because: Plan didn't satisfy dependencies: `{{ unmet_dependencies }}`
 {% if candidates %}
 Available solutions:
 {%- for candidate in candidates %}
-- `{{ candidate.name[:-5] if candidate.name.endswith('Agent') else candidate.__class__.__name__ }}` provides: `{{ candidate.output_schema.__annotations__ | join('`, `') }}`
+- `{{ candidate | normalized_name }}` provides: `{{ candidate.output_schema.__annotations__ | join('`, `') }}`
 {%- endfor %}
 {% endif %}
 

@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     from dask.dataframe import DataFrame as dDataFrame, Series as dSeries
     from panel.viewable import Viewable
 
-    from ..ai.answer import Answer, Chat
+    from ..ai.answer import Answer, Answers, Chat
     from ..ai.checks import CheckResult
     from ..ai.llm import Llm
     from ..ai.overview import Overview
@@ -712,6 +712,30 @@ class Source(MultiTypeComponent):
         # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
         from ..ai.answer import aask
         return await aask(self, question, llm=llm, agents=agents, confirm=confirm, returns=returns)
+
+    def ask_many(
+        self, questions: list[str], *, llm: Llm | None = None, agents: list | None = None,
+        returns: Any = None, concurrency: int = 4,
+    ) -> Answers:
+        """
+        Ask this source several independent questions at once and return their
+        Answers in order, at most ``concurrency`` in flight at a time.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import ask_many
+        return ask_many(self, questions, llm=llm, agents=agents, returns=returns, concurrency=concurrency)
+
+    async def aask_many(
+        self, questions: list[str], *, llm: Llm | None = None, agents: list | None = None,
+        returns: Any = None, concurrency: int = 4,
+    ) -> Answers:
+        """
+        Ask this source several independent questions at once and await their
+        Answers in order, at most ``concurrency`` in flight at a time.
+        """
+        # Deferred: lumen.ai pulls in the Panel UI stack, which import lumen avoids
+        from ..ai.answer import aask_many
+        return await aask_many(self, questions, llm=llm, agents=agents, returns=returns, concurrency=concurrency)
 
     def describe(self, table: str, description: str | None = None, columns: dict | None = None) -> Source:
         """

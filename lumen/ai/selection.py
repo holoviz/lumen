@@ -158,12 +158,21 @@ def _layers(element: Any) -> list[tuple[Any, pd.DataFrame]]:
         # A by= chart: one layer per category, whose value is the overlay's key
         names = [dim.name for dim in element.kdims]
         return [
-            (layer, layer.dframe().assign(**dict(zip(names, key if isinstance(key, tuple) else (key,), strict=True))))
+            (layer, _rows(layer).assign(**dict(zip(names, key if isinstance(key, tuple) else (key,), strict=True))))
             for key, layer in element.items() if isinstance(layer, _SELECTABLE)
         ]
     if isinstance(element, hv.Overlay):
         return [layer for item in element if not isinstance(item, hv.Tiles) for layer in _layers(item)]
-    return [(element, element.dframe())] if isinstance(element, _SELECTABLE) else []
+    return [(element, _rows(element))] if isinstance(element, _SELECTABLE) else []
+
+
+def _rows(element: Any) -> pd.DataFrame:
+    """One row per glyph, as a selection's indices count them."""
+    if element.interface.datatype == "geodataframe":
+        # One row per shape already; dframe() expands shapes into vertices
+        # and fails on a MultiPolygon, whose parts have different lengths
+        return pd.DataFrame(element.data)
+    return element.dframe()
 
 
 def _numeric(column: pd.Series, value: Any) -> tuple[pd.Series, float]:
