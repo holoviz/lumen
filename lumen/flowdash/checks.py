@@ -583,7 +583,7 @@ def check_table_config(config: dict[str, Any], inputs: dict[str, Any]) -> str | 
         source = lookup_source(ref)
         if source is None:
             return missing_source(ref, host_sources())
-        if not can_access_source(source) or not can_access_source(ref):
+        if not can_access_source(source):
             return access_denied_source(ref)
     elif ref:
         ignored = _unverified(
@@ -817,15 +817,14 @@ async def check_sql_config(config: dict[str, Any], inputs: dict[str, Any]) -> An
         if not isinstance(source, BaseSQLSource):
             return CheckDiagnostic(f"{type(source).__name__} does not run SQL.", field="sql")
         from .access import (
-            access_denied_source, access_denied_tables, can_access_source,
-            unauthorized_reads,
+            access_denied_source, can_access_source, sql_access_denied,
         )
 
         if not can_access_source(source):
             return CheckDiagnostic(access_denied_source(source.name), field="sql")
         await asyncio.to_thread(check_query, sql, source)
-        if denied := unauthorized_reads(sql, source):
-            return CheckDiagnostic(access_denied_tables(denied), field="sql")
+        if denied := sql_access_denied(sql, source):
+            return CheckDiagnostic(denied, field="sql")
         if not source.cancels_queries:
             await asyncio.to_thread(check_columns, sql, source)
             return warning
@@ -866,7 +865,7 @@ def check_source_config(config: dict[str, Any], inputs: dict[str, Any]) -> str |
     source = lookup_source(ref)
     if source is None:
         return missing_source(ref, host_sources())
-    if not can_access_source(source) or not can_access_source(ref):
+    if not can_access_source(source):
         return access_denied_source(ref)
     return None
 

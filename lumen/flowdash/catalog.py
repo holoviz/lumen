@@ -42,7 +42,7 @@ from sqlglot import exp
 
 from ..sources.base import BaseSQLSource, Source
 from ..transforms.sql import SQLLimit
-from .access import authorized_tables, is_admin as _check_admin, parse_access
+from .access import authorized_tables, is_admin, parse_access
 from .project import (
     Problem, Project, ProjectError, ProjectSection, Section, register_section,
 )
@@ -538,10 +538,6 @@ def table_detail(source: Source, table: str, timeout: float = SAMPLE_TIMEOUT) ->
 # Writing the section
 
 
-def _admin(app: Any) -> bool:
-    return _check_admin(app)
-
-
 def _prune(section: dict[str, Any]) -> dict[str, Any]:
     """``section`` without the tables, sources and ``tables:`` left with no settings."""
     result = {}
@@ -574,7 +570,7 @@ def set_assistant(
     from .nodes import lookup_source
 
     with _FILE_LOCK:
-        if not _admin(app):
+        if not is_admin(app):
             return [Problem(NOT_ADMIN)]
         try:
             current = raw_section(project)

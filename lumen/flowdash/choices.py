@@ -96,7 +96,7 @@ def table_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, l
     if source is None:
         choices: dict[str, Any] = dict(source_choices(config, inputs))
         source = lookup_source(ref) if ref else None
-        if source is not None and (not can_access_source(source) or not can_access_source(ref)):
+        if source is not None and not can_access_source(source):
             source = None
     else:
         choices = {"ref": {f"{ref} ({IGNORED_REF})": ref}} if ref else {}

@@ -47,6 +47,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.nodes import MappingNode, SequenceNode
 
+from .access import is_admin
 from .catalog_admin import _USED_CSS, used_html
 from .data import (
     CHECKS, DashboardRef, MetricStatus, metric_statuses, metric_usage,
@@ -55,9 +56,8 @@ from .data import (
 from .metrics import SECTION, metrics_page
 from .metrics_edit import (
     NAME_KEY, NOT_ADMIN_PREVIEW, PREVIEW_ROWS, PREVIEW_TIMEOUT, UNSET,
-    PreviewResult, check_metric, delete_metric, is_admin, literal_blocks,
-    masked, metric_problems, preview_metric, raw_section, replace_metric,
-    save_metric,
+    PreviewResult, check_metric, delete_metric, literal_blocks, masked,
+    metric_problems, preview_metric, raw_section, replace_metric, save_metric,
 )
 
 logger = logging.getLogger(__name__)

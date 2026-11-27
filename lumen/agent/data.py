@@ -32,7 +32,7 @@ from ..flowdash import (
 )
 from ..flowdash.access import (
     access_denied_source, access_denied_tables, authorized_sources,
-    authorized_tables, can_access_source, can_access_table, unauthorized_reads,
+    authorized_tables, can_access_source, can_access_table, sql_access_denied,
 )
 from ..flowdash.catalog import hidden_reads, turned_off
 from ..flowdash.metrics import Metric
@@ -99,7 +99,7 @@ def _find(deps: FlowDashDeps, source: str | None, table: str | None = None) -> t
     if source in found:
         name = source
     elif source is not None and (value := lookup_source(source, context)) is not None:
-        if not can_access_source(value, context) or not can_access_source(source, context):
+        if not can_access_source(value, context):
             raise ModelRetry(access_denied_source(source))
         name = next((n for n, (_, v) in found.items() if v is value), source)
         found.setdefault(name, (None, value))
@@ -553,8 +553,8 @@ async def run_sql(ctx: RunContext[FlowDashDeps], sql: str, source: str | None = 
     try:
         cleaned = clean_sql(sql.strip(), src.dialect)
         check_query(cleaned, src)
-        if denied := unauthorized_reads(cleaned, src, context):
-            return access_denied_tables(denied)
+        if denied := sql_access_denied(cleaned, src, context):
+            return denied
         if read := hidden_reads(cleaned, src, hidden_tables(src, context)):
             return turned_off(read)
         root, statement = expand(cleaned, src)

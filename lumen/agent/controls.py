@@ -19,8 +19,7 @@ from pydantic import Field
 from pydantic_ai import FunctionToolset, ModelRetry, RunContext
 
 from ..flowdash import (
-    FILTER_ID, METRIC_ID, SQL_ID, fetch, filterable_columns, host_metrics,
-    pipeline_columns,
+    FILTER_ID, METRIC_ID, SQL_ID, fetch, filterable_columns, pipeline_columns,
 )
 from ..flowdash.choices import pipeline_column_types
 from ..flowdash.nodes import column_values
@@ -304,7 +303,7 @@ def add_kpi(
     adhoc = ""
     if component != METRIC_ID:
         adhoc = " The number is computed ad hoc, not an agreed metric; each card's caption says so."
-        if metrics := list(host_metrics(ops.editor.context)):
+        if metrics := list(_graph.metrics(ops)):
             more = f" and {len(metrics) - MAX_METRICS_LISTED} more" if len(metrics) > MAX_METRICS_LISTED else ""
             adhoc += (f" This app defines metrics: {', '.join(metrics[:MAX_METRICS_LISTED])}{more}. None was used for "
                       "this number; use add_metric if one fits, or ask an admin to define one.")

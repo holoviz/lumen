@@ -27,6 +27,7 @@ from pathlib import Path
 from ruamel.yaml.scalarstring import LiteralScalarString
 
 from ..sources.base import BaseSQLSource
+from .access import is_admin
 from .metrics import (
     _NAME, SECTION, Metric, MetricSet, Query, _Reader, aggregate, bind_sql,
     check_metrics, coerce_dimension_values, prepare, table_sql,
@@ -173,13 +174,6 @@ def literal_blocks(value: t.Any) -> t.Any:
 
 # ---------------------------------------------------------------------------
 # Writing the section
-
-
-def is_admin(app: t.Any) -> bool:
-    """Whether ``app``'s session is still an admin, with the project file read again."""
-    from .access import is_admin as _is_admin
-
-    return _is_admin(app)
 
 
 def _who(app: t.Any) -> str:

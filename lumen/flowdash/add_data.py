@@ -25,9 +25,10 @@ import panel_material_ui as pmui
 from panel.viewable import Viewer
 from panel_flowdash.admin.kit import esc
 
+from .access import is_admin
 from .uploads import (
-    Connection, Preview, Upload, UploadError, Uploads, _is_admin, _slug,
-    excel_sheets, extension_of,
+    Connection, Preview, Upload, UploadError, Uploads, _slug, excel_sheets,
+    extension_of,
 )
 
 ALL_SHEETS = "All sheets, a table each"
@@ -251,7 +252,7 @@ class AddDataDialog(Viewer):
         admin, ``mode="connect"``, there filled in with ``location`` and
         ``name``, e.g. to enter a source's credentials again.
         """
-        admin = _is_admin(self._app)
+        admin = is_admin(self._app)
         with pn.io.hold():
             self._content, self._filename, self._preview, self._source = None, "", None, None
             self._chosen.object = "No file chosen"

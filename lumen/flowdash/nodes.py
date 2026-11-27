@@ -81,8 +81,8 @@ from ..transforms.sql import (
 from ..util import get_dataframe_schema
 from .access import (
     access_denied_metric, access_denied_source, access_denied_tables,
-    authorized_tables, can_access_metric, can_access_source, can_access_table,
-    unauthorized_reads,
+    authorized_metrics, authorized_tables, can_access_metric,
+    can_access_source, can_access_table, restricted_tables, sql_access_denied,
 )
 from .checks import (
     CheckDiagnostic, _engine_error, _read, _unverified, check_chart,
@@ -1048,7 +1048,7 @@ def _column_names(names: list[str]) -> str:
     return f"{', '.join(names[:_OVERVIEW_NAMES])} +{len(names) - _OVERVIEW_NAMES} more"
 
 
-def _source_overview(source: Source) -> tuple[pd.DataFrame | str, list[str]]:
+def _source_overview(source: Source, tables: list[str] | None = None) -> tuple[pd.DataFrame | str, list[str]]:
     """
     An overview of ``source``'s tables from the schemas it stored or the
     frames it holds, without a query, and the tables whose schema it does
@@ -1056,7 +1056,7 @@ def _source_overview(source: Source) -> tuple[pd.DataFrame | str, list[str]]:
     line naming the tables: a one-column frame would be captioned as its
     own shape, e.g. "1 row, 1 column".
     """
-    tables = list(listed_tables(source))
+    tables = list(listed_tables(source) if tables is None else tables)
     cached = source._get_schema_cache() or {}
     entries = [(table, *_table_metadata(source, table, cached)) for table in tables]
     read = _schemas_read(source)
@@ -1097,7 +1097,7 @@ def _read_schemas(source: Source, tables: list[str]) -> None:
             )
 
 
-def _source_summary(node: LumenNode, source: Source) -> pd.DataFrame | str:
+def _source_summary(node: LumenNode, source: Source, tables: list[str] | None = None) -> pd.DataFrame | str:
     """
     The overview a source node previews: its tables with their row and
     column counts and column names. Reading a schema counts the table's
@@ -1108,14 +1108,14 @@ def _source_summary(node: LumenNode, source: Source) -> pd.DataFrame | str:
     or an agent's tool thread, only what is known is shown, so nothing is
     queried.
     """
-    overview, missing = _source_overview(source)
+    overview, missing = _source_overview(source, tables)
     if not missing:
         return overview
     if not _blocks_event_loop():
         if not threading.current_thread().name.startswith(_FLOWDASH_PREVIEW_THREAD):
             return overview
         _read_schemas(source, missing[:_OVERVIEW_TABLES_INLINE])
-        return _source_overview(source)[0]
+        return _source_overview(source, tables)[0]
     with _PREVIEW_LOCK:
         if (pending := _SCHEMA_PENDING.get(source)) is not None:
             pending[1].add(node)
@@ -1594,7 +1594,7 @@ def _ref_source(ref: str, context: Mapping[str, Any]) -> Source | None:
     source = lookup_source(ref, context)
     if source is None:
         raise ValueError(missing_source(ref, host_sources(context)))
-    if not can_access_source(source, context) or not can_access_source(ref, context):
+    if not can_access_source(source, context):
         raise PermissionError(access_denied_source(ref))
     return source
 
@@ -1636,18 +1636,23 @@ class SourceNode(LumenNode):
         source = self._object
         if source is None:
             return pn.pane.Markdown("No source")
-        return pn.pane.Markdown(f"{self.ref}: {', '.join(listed_tables(source))}")
+        return pn.pane.Markdown(f"{self.ref}: {', '.join(authorized_tables(source, self._context))}")
 
     def __flowdash_preview__(self, output: str | None = None) -> pd.DataFrame | str | None:
         if self._error is not None or self._object is None:
             return None
-        return _source_summary(self, self._object)
+        return _source_summary(self, self._object, authorized_tables(self._object, self._context))
 
     def __flowdash_definition__(self) -> tuple[str, str] | None:
         """The source's spec as YAML, read only in FlowDash's code panel, with its credentials hidden."""
         if self._error is not None or self._object is None:
             return None
         spec = self._object.to_spec()
+        restricted = restricted_tables(self._object, self._context)
+        if restricted and isinstance(declared := spec.get("tables"), Mapping):
+            spec["tables"] = {name: table for name, table in declared.items() if name not in restricted}
+        elif restricted and isinstance(declared, list):
+            spec["tables"] = [name for name in declared if name not in restricted]
         spec = redact_spec({"type": spec.pop("type", None), **spec} if "type" in spec else spec)
         return "yaml", yaml.safe_dump(spec, sort_keys=False, allow_unicode=True)
 
@@ -1830,8 +1835,8 @@ class SQLNode(GlobalFilterTarget, LumenNode):
             return None
         if not can_access_source(self._input, self._context):
             raise PermissionError(access_denied_source(self._input.name))
-        if denied := unauthorized_reads(self.sql, self._input, self._context):
-            raise PermissionError(access_denied_tables(denied))
+        if denied := sql_access_denied(self.sql, self._input, self._context):
+            raise PermissionError(denied)
         limit = effective_limit(self.editor, self.limit)
         return compile_sql(self._input, self.sql, self.table or default_table(self.sql), limit)
 
@@ -2212,9 +2217,13 @@ def check_metric_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
         return None
     metrics = host_metrics()
     metric = metrics.get(name)
+    if metric is not None and not can_access_metric(metric):
+        return CheckDiagnostic(access_denied_metric(name), field="metric")
     if metric is None:
         failure = getattr(metrics, "failures", {}).get(name)
-        return CheckDiagnostic(failure.message if failure is not None else missing_metric(name, metrics), field="metric")
+        if failure is not None:
+            return CheckDiagnostic(failure.message, field="metric")
+        return CheckDiagnostic(missing_metric(name, authorized_metrics()), field="metric")
     try:
         prepare(metric, metric_query(config, inputs.get("parameters")))
     except MetricError as exc:
@@ -2301,11 +2310,13 @@ class MetricNode(PipelineNode):
             return None
         metrics = host_metrics(self._context)
         metric = metrics.get(self.metric)
+        if metric is not None and not can_access_metric(metric, self._context):
+            raise PermissionError(access_denied_metric(self.metric))
         if metric is None:
             failure = getattr(metrics, "failures", {}).get(self.metric)
-            raise ValueError(failure.message if failure is not None else missing_metric(self.metric, metrics))
-        if not can_access_metric(metric, self._context):
-            raise PermissionError(access_denied_metric(self.metric))
+            if failure is not None:
+                raise ValueError(failure.message)
+            raise ValueError(missing_metric(self.metric, authorized_metrics(self._context)))
         source = lookup_source(metric.source, self._context)
         if source is None:
             raise ValueError(missing_source(metric.source, host_sources(self._context)))

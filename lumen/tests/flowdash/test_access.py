@@ -15,11 +15,15 @@ from panel_flowdash.auth import Identity, Permission
 from panel_flowdash.editor import _current
 
 from lumen.flowdash import (
-    ADMIN_KEY, CATALOG_KEY, COMPONENTS, IDENTITY_KEY, METRICS_KEY,
-    SOURCE_ALIASES_KEY, SOURCES_KEY, Catalog, ProjectCatalog, attach_access,
-    authorized_metrics, authorized_sources, authorized_tables, bind_identity,
-    can_access, can_access_metric, can_access_source, can_access_table,
-    check_source_config, check_sql_config, check_table_config, is_admin,
+    CATALOG_KEY, COMPONENTS, METRICS_KEY, SOURCE_ALIASES_KEY, SOURCES_KEY,
+    Catalog, ProjectCatalog, attach_access, authorized_metrics,
+    authorized_sources, authorized_tables, can_access_metric,
+    can_access_source, can_access_table, check_source_config, check_sql_config,
+    check_table_config,
+)
+from lumen.flowdash.access import (
+    ADMIN_KEY, IDENTITY_KEY, bind_identity, can_access, file_reads,
+    has_access_rules, is_admin, sql_access_denied,
 )
 from lumen.flowdash.app import build_routes
 from lumen.flowdash.catalog import set_assistant
@@ -108,9 +112,12 @@ class FakeApp:
     def _still_admin(self) -> bool:
         return self.admin
 
+    def _authorize_admin(self, *, fresh: bool = False) -> bool:
+        return self.admin
 
-def _make_context(project_yaml: str = PROJECT_YAML, tmp_path=None):
-    hr = DuckDBSource(uri=":memory:", tables=HR_TABLES)
+
+def _make_context(project_yaml: str = PROJECT_YAML, tmp_path=None, hr_tables=None):
+    hr = DuckDBSource(uri=":memory:", tables=hr_tables or HR_TABLES)
     sales = DuckDBSource(uri=":memory:", tables=SALES_TABLES)
     sources = {"hr": hr, "sales": sales}
     context = {SOURCES_KEY: sources, SOURCE_ALIASES_KEY: {"people": "hr"}}
@@ -327,11 +334,10 @@ async def test_nodes_and_checks_enforce_per_resource_access():
             assert "permission" in nodes[blocked]["message"].lower()
 
         # Sales user cannot resolve headcount metric (inherits hr source) but can resolve orders_total.
-        ops.add_node("Lumen/metric", {"metric": "headcount", "measures": ["total"]}, name="hc")
+        with pytest.raises(OperationError, match="permission"):
+            ops.add_node("Lumen/metric", {"metric": "headcount", "measures": ["total"]}, name="hc")
         ops.add_node("Lumen/metric", {"metric": "orders_total", "measures": ["revenue"]}, name="rev")
         nodes = ops.preview()["nodes"]
-        assert nodes["hc"]["status"] in ("invalid", "failed")
-        assert "permission" in nodes["hc"]["message"].lower()
         assert nodes["rev"]["status"] == "ok"
         assert ops.node_output("rev.data")["revenue"].iloc[0] == 125
 
@@ -442,3 +448,153 @@ def test_build_routes_attaches_session_access(tmp_path):
         assert callable(app._editor.context[ADMIN_KEY])
     finally:
         app._editor.dispose()
+
+
+def _instance(ops, name):
+    return ops.editor._component_instances[ops._instance(name)]
+
+
+FINANCE = Identity("bob", groups=frozenset({"finance"}))
+HR_MEMBER = Identity("alice", groups=frozenset({"hr"}))
+ADMIN = Identity("root", groups=frozenset({"admins"}))
+BLOCKED_ADMIN = Identity("blocked_admin", groups=frozenset({"admins"}))
+
+
+def test_sql_on_a_source_with_rules_may_not_read_files(tmp_path):
+    csv = tmp_path / "salaries.csv"
+    csv.write_text("id,salary\n1,120000\n2,95000\n", encoding="utf-8")
+    hr_tables = {
+        **HR_TABLES,
+        "salaries": f"SELECT * FROM read_csv_auto('{csv}')",
+        # A view over a restricted table is a table of its own: it needs its own rule.
+        "pay_view": "SELECT * FROM salaries",
+    }
+    _, context, hr, sales = _make_context(hr_tables=hr_tables)
+    assert has_access_rules(hr, context)
+    assert not has_access_rules(sales, context)
+
+    by_function = f"SELECT * FROM read_csv_auto('{csv}')"
+    by_path = f"SELECT * FROM '{csv}'"
+    nested = f"SELECT (SELECT COUNT(*) FROM read_parquet('{tmp_path}/*.parquet')) AS n FROM employees"
+    assert file_reads(by_function, hr) == ["read_csv_auto"]
+    assert file_reads(by_path, hr) == [str(csv)]
+    assert file_reads(nested, hr) == ["read_parquet"]
+    assert file_reads("SELECT * FROM main.employees", hr) == []
+
+    # Refused for every session on a source with rules, the hr members and admins included.
+    for identity, admin in ((FINANCE, False), (HR_MEMBER, False), (ADMIN, True)):
+        for sql in (by_function, by_path, nested):
+            denied = sql_access_denied(sql, hr, context, identity=identity, admin=admin)
+            assert denied is not None and "reads files" in denied
+    assert "salaries" in sql_access_denied("SELECT * FROM salaries", hr, context, identity=FINANCE, admin=False)
+    assert sql_access_denied("SELECT * FROM salaries", hr, context, identity=HR_MEMBER, admin=False) is None
+    assert sql_access_denied("SELECT * FROM pay_view", hr, context, identity=FINANCE, admin=False) is None
+    # A source without rules is unchanged.
+    assert sql_access_denied(by_function, sales, context, identity=FINANCE, admin=False) is None
+
+    # A SQL metric reading a file on a source with rules is refused; one reading tables by name is not.
+    assert not can_access_metric({"source": "hr", "sql": by_function}, context, identity=HR_MEMBER, admin=False)
+    assert can_access_metric({"source": "hr", "sql": "SELECT * FROM employees"}, context, identity=HR_MEMBER, admin=False)
+    assert can_access_metric({"source": "sales", "sql": by_function}, context, identity=FINANCE, admin=False)
+
+
+async def test_sql_node_and_check_refuse_file_reads(tmp_path):
+    csv = tmp_path / "salaries.csv"
+    csv.write_text("id,salary\n1,120000\n", encoding="utf-8")
+    hr_tables = {**HR_TABLES, "salaries": f"SELECT * FROM read_csv_auto('{csv}')"}
+    _, context, hr, _ = _make_context(hr_tables=hr_tables)
+    editor = FlowDash(components=COMPONENTS, notifications=False, history=False, context=dict(context))
+    bind_identity(editor, FINANCE)
+    try:
+        with _current(weakref.ref(editor)):
+            diag = await check_sql_config({"sql": f"SELECT * FROM read_csv_auto('{csv}')"}, {"source": hr})
+            assert diag is not None and "reads files" in str(diag)
+        ops = DashboardOps(editor)
+        ops.add_node("Lumen/source", {"ref": "hr"}, name="hr_src")
+        ops.add_node("Lumen/sql", {"sql": "SELECT * FROM employees"}, name="q")
+        ops.connect("hr_src.source", "q.source")
+        q = _instance(ops, "q")
+        q.sql = f"SELECT * FROM read_csv_auto('{csv}')"
+        nodes = ops.preview()["nodes"]
+        assert nodes["q"]["status"] in ("invalid", "failed")
+        assert "reads files" in nodes["q"]["message"]
+    finally:
+        editor.dispose()
+
+
+@pytest.mark.parametrize(("identity", "admin", "allowed"), [
+    (FINANCE, False, False),
+    (HR_MEMBER, False, True),
+    (ADMIN, True, True),
+    (BLOCKED_ADMIN, True, False),
+], ids=["non-member", "member", "admin", "denied-admin"])
+async def test_restricted_table_surfaces_by_session(identity, admin, allowed):
+    _, context, hr, _ = _make_context()
+    editor = FlowDash(components=COMPONENTS, notifications=False, history=False, context=dict(context))
+    bind_identity(editor, identity, admin=admin)
+    try:
+        with _current(weakref.ref(editor)):
+            denied = check_table_config({"ref": "hr", "table": "salaries"}, {})
+            assert (denied is None) is allowed
+            diag = await check_sql_config({"sql": "SELECT salary FROM salaries"}, {"source": hr})
+            assert (diag is None) is allowed
+            assert can_access_metric(editor.context[METRICS_KEY]["payroll"], editor.context) is allowed
+            assert ("salaries" in authorized_tables(hr, editor.context)) is allowed
+
+        ops = DashboardOps(editor)
+        ops.add_node("Lumen/source", {"ref": "hr"}, name="hr_src")
+        node = _instance(ops, "hr_src")
+        assert ("salaries" in node.__flowdash_definition__()[1]) is allowed
+        assert "employees" in node.__flowdash_definition__()[1]
+        assert ("salaries" in str(node.__flowdash_preview__())) is allowed
+        assert ("salaries" in node._body().object) is allowed
+    finally:
+        editor.dispose()
+
+
+def test_alias_refs_and_derived_sources_are_checked_against_their_root():
+    _, context, _, _ = _make_context()
+    editor = FlowDash(components=COMPONENTS, notifications=False, history=False, context=dict(context))
+    try:
+        bind_identity(editor, Identity("sam", groups=frozenset({"sales"})))
+        with _current(weakref.ref(editor)):
+            assert "permission" in check_source_config({"ref": "people"}, {}).lower()
+            assert "permission" in check_table_config({"ref": "people", "table": "employees"}, {}).lower()
+
+        bind_identity(editor, FINANCE)
+        with _current(weakref.ref(editor)):
+            assert check_source_config({"ref": "people"}, {}) is None
+            assert "permission" in check_table_config({"ref": "people", "table": "salaries"}, {}).lower()
+
+        ops = DashboardOps(editor)
+        ops.add_node("Lumen/source", {"ref": "people"}, name="src")
+        ops.add_node("Lumen/sql", {"sql": "SELECT * FROM employees", "table": "emp"}, name="emp")
+        ops.connect("src.source", "emp.source")
+        ops.add_node("Lumen/sql", {"sql": "SELECT * FROM emp"}, name="ok")
+        ops.connect("emp.result", "ok.source")
+        ops.add_node("Lumen/sql", {"sql": "SELECT * FROM emp"}, name="pay")
+        ops.connect("emp.result", "pay.source")
+        _instance(ops, "pay").sql = "SELECT * FROM salaries"
+        nodes = ops.preview()["nodes"]
+        assert nodes["ok"]["status"] == "ok", nodes["ok"]
+        assert nodes["pay"]["status"] in ("invalid", "failed")
+        assert "permission" in nodes["pay"]["message"].lower()
+    finally:
+        editor.dispose()
+
+
+def test_admin_status_is_only_asked_when_an_allowlist_needs_it():
+    _, context, hr, sales = _make_context()
+    calls = []
+
+    def admin():
+        calls.append(1)
+        return False
+
+    context = {**context, IDENTITY_KEY: FINANCE, ADMIN_KEY: admin}
+    assert can_access_source(sales, context)
+    assert authorized_tables(sales, context) == ["orders"]
+    assert can_access_table(hr, "employees", context)
+    assert calls == []
+    assert not can_access_table(hr, "salaries", context)
+    assert calls == [1]

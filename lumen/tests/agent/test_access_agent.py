@@ -21,8 +21,8 @@ from lumen.agent.data import (
 )
 from lumen.flowdash import (
     CATALOG_KEY, COMPONENTS, METRICS_KEY, SOURCES_KEY, ProjectCatalog,
-    bind_identity,
 )
+from lumen.flowdash.access import bind_identity
 from lumen.flowdash.metrics import ProjectMetrics
 from lumen.flowdash.project import PROJECT_FILE, parse_project
 from lumen.sources.duckdb import DuckDBSource
@@ -69,8 +69,8 @@ metrics:
 """
 
 
-def _session(identity: Identity | None, *, admin: bool = False):
-    hr = DuckDBSource(uri=":memory:", tables=HR_TABLES)
+def _session(identity: Identity | None, *, admin: bool = False, hr_tables=None):
+    hr = DuckDBSource(uri=":memory:", tables=hr_tables or HR_TABLES)
     sales = DuckDBSource(uri=":memory:", tables=SALES_TABLES)
     context = {SOURCES_KEY: {"hr": hr, "sales": sales}}
     project = parse_project(PROJECT_YAML, PROJECT_FILE, context)
@@ -180,3 +180,36 @@ async def test_agent_allows_authorized_user_and_admin():
         assert placed.startswith("Placed metric node 'rev_m'")
     finally:
         admin_session.close()
+
+
+async def test_agent_sql_may_not_read_files_on_a_source_with_rules(tmp_path):
+    csv = tmp_path / "salaries.csv"
+    csv.write_text("id,salary\n1,120000\n", encoding="utf-8")
+    hr_tables = {**HR_TABLES, "salaries": f"SELECT * FROM read_csv_auto('{csv}')"}
+    session, ctx = _session(Identity("bob", groups=frozenset({"finance"})), hr_tables=hr_tables)
+    try:
+        # check_query lets a query call the table function a declared table is defined by.
+        sql = f"SELECT * FROM read_csv_auto('{csv}')"
+        text = await run_sql(ctx, sql, source="hr")
+        assert "reads files" in text and "120000" not in text
+        with pytest.raises(ModelRetry, match="reads files"):
+            await add_sql(ctx, "hr", "file_q", sql)
+        assert "file_q" not in session.ops.nodes()
+        assert "1 rows" in await run_sql(ctx, "SELECT COUNT(*) FROM employees", source="hr")
+    finally:
+        session.close()
+
+
+def test_graph_metrics_fails_closed_per_metric(monkeypatch):
+    session, _ = _session(Identity("alice", groups=frozenset({"hr"})))
+
+    def flaky(metric, context):
+        if metric.name == "payroll":
+            raise RuntimeError("broken check")
+        return True
+
+    monkeypatch.setattr(_graph, "can_access_metric", flaky)
+    try:
+        assert set(_graph.metrics(session.ops)) == {"headcount", "sales_rev"}
+    finally:
+        session.close()

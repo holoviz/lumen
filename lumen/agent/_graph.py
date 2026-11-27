@@ -47,16 +47,16 @@ def metrics(ops: DashboardOps) -> dict[str, Any]:
             continue
         except Exception as exc:
             logger.warning("Could not read the app's metric %r (%s).", name, type(exc).__name__)
-    # A metric the session cannot access or computed from a table turned off for the assistant is left out.
-    try:
-        denied = {
-            name for name, metric in snapshot.items()
-            if not can_access_metric(metric, ops.editor.context) or hidden_reads_of(metric, ops.editor.context)
-        }
-    except Exception as exc:
-        logger.warning("Could not check the metrics' tables against the catalog (%s).", type(exc).__name__)
-        denied = set()
-    return {name: metric for name, metric in snapshot.items() if name not in denied}
+    # A metric the session cannot access or computed from a table turned off for the assistant is left
+    # out, and so is one whose check fails: these are access checks, so they fail closed.
+    allowed: dict[str, Any] = {}
+    for name, metric in snapshot.items():
+        try:
+            if can_access_metric(metric, ops.editor.context) and not hidden_reads_of(metric, ops.editor.context):
+                allowed[name] = metric
+        except Exception as exc:
+            logger.warning("Could not check access to the app's metric %r (%s).", name, type(exc).__name__)
+    return allowed
 
 
 def nodes(ops: DashboardOps, component: str | None = None) -> list[str]:

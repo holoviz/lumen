@@ -25,8 +25,7 @@ from ..flowdash import (
     selection_warnings,
 )
 from ..flowdash.access import (
-    access_denied_source, access_denied_tables, can_access_source,
-    unauthorized_reads,
+    access_denied_source, can_access_source, sql_access_denied,
 )
 from ..flowdash.catalog import hidden_reads, turned_off
 from ..flowdash.deckgl import (
@@ -122,8 +121,8 @@ async def _test_run(src, sql: str, limit: int, context: Mapping[str, Any] | None
         if context is not None:
             if not can_access_source(src, context):
                 raise ModelRetry(access_denied_source(src.name))
-            if denied := unauthorized_reads(sql, src, context):
-                raise ModelRetry(access_denied_tables(denied))
+            if denied := sql_access_denied(sql, src, context):
+                raise ModelRetry(denied)
             if read := hidden_reads(sql, src, hidden_tables(src, context)):
                 raise ModelRetry(turned_off(read))
         root, statement = expand(sql, src)
