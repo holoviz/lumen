@@ -73,6 +73,7 @@ nav = [
   ]},
   {"Extending Lumen" = "extending.md"},
   {"Reference" = [
+    {"Lumen for LLMs" = "reference/lumen_for_llms.md"},
     {"API" = [
       "reference/api.md",
       {"AI" = [

@@ -145,10 +145,14 @@ toolz = "*"
 zensical = "<0.0.17"
 mkdocstrings = "*"
 mkdocstrings-python = "*"
+nbsite = ">=0.10.0a0"
 
 [feature.doc.tasks]
 # Updated tasks to use zensical instead of mkdocs
-docs-build = { cmd = 'zensical build --clean', depends-on = ['install'] }
+_docs-build-site = { cmd = 'zensical build --clean', depends-on = ['install'] }
+# The markdown mirror, llms.txt and llms-full.txt, after the site build's --clean
+_docs-markdown = { cmd = 'python -m nbsite build-llms --config scripts/llms_config.py && python scripts/llms_config.py', depends-on = ['_docs-build-site'] }
+docs-build = { depends-on = ['_docs-markdown'] }
 docs-serve = { cmd = 'zensical serve', depends-on = ['install'] }
 docs-clean = { cmd = 'rm -rf builtdocs', depends-on = ['install'] }
 
