@@ -318,6 +318,15 @@ def test_the_metric_page_shows_the_definition_and_runs_try_it(project):
     assert "LIMIT" in result.sql and metric._sql_card.visible
 
 
+def test_the_metric_page_names_the_project_file_under_windows_path_semantics(project):
+    # On Windows, project.path is a backslash-joined drive path; the breadcrumb must
+    # still show just the file name instead of the raw path (rsplit("/", ...) alone
+    # leaves backslashes untouched).
+    project.path = r"C:\Users\ana\Documents\project.yaml"
+    text = _text(page(project, "metrics/paid"))
+    assert "project.yaml" in text and "C:\\Users" not in text
+
+
 def test_a_failing_metric_page_says_why_and_try_it_waits(project):
     store = MemoryDashboardStore()
     model = store.create_dashboard("bo", "Power")

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import typing as t
 
+from pathlib import PureWindowsPath
 from urllib.parse import quote
 
 import panel as pn
@@ -214,7 +215,9 @@ class MetricPage(Viewer):
         status = self.status
         check = (chip(CHECKS["valid"], "success") if status.check == "valid"
                  else chip(CHECKS[status.check], "error"))
-        where = self.project.path.rsplit("/", 1)[-1] if self.project.path else "the project file"
+        # PureWindowsPath(...).name splits on both "/" and "\\" regardless of host OS,
+        # so a Windows project path still shows just its file name in the breadcrumb.
+        where = PureWindowsPath(self.project.path).name if self.project.path else "the project file"
         description = status.description
         head = cell(
             f'<div class="head"><div class="icon">Σ</div><div><div class="name">{esc(status.name)}</div>'
