@@ -2032,6 +2032,11 @@ class VegaLiteView(View):
         encoded = self._apply_text_default(encoded, theme)
         params = dict(object=encoded, **self.kwargs)
         params['theme'] = theme
+        sizing = str(params.get('sizing_mode') or '')
+        if encoded.get('height') == 'container' and 'both' not in sizing and 'height' not in sizing:
+            # Nothing gives the pane a height to fill, so the chart would
+            # collapse; Vega's default height draws it instead
+            params['object'] = {k: v for k, v in encoded.items() if k != 'height'}
         return params
 
     def get_panel(self) -> pn.pane.Vega:

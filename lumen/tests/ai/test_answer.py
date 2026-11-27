@@ -950,6 +950,15 @@ def test_answer_card_has_answer_chart_and_collapsed_sql(chart_answer):
     assert json.loads(code.removeprefix("```json\n").removesuffix("\n```"))["mark"] == "bar"
 
 
+def test_card_sizes_a_vega_lite_chart_drawn_before_it_to_its_content(chart_answer):
+    # A notebook gives a stretching chart only its minimum height, and a taller one spilled over the card
+    view = chart_answer.view
+    view.kwargs = {"sizing_mode": "stretch_both", "min_height": 200}
+    view.panel  # drawn before the card, as polishing the chart does
+    chart_answer.__panel__()
+    assert (view._panel.sizing_mode, view._panel.min_height) == ("stretch_width", None)
+
+
 def test_with_spec_redraws_a_vega_lite_chart(chart_answer):
     edited = json.loads(chart_answer._chart_spec()[1])
     edited["mark"] = "line"

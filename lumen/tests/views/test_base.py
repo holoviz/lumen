@@ -1088,3 +1088,13 @@ def test_hvplot_view_without_geoviews_draws_plain_axes(monkeypatch, caplog):
     plot = view.get_plot(view.get_data())
     assert type(plot).__name__ == "Points"
     assert "needs geoviews" in caplog.text
+
+
+def test_vega_container_height_is_dropped_when_nothing_gives_the_pane_a_height():
+    # In a notebook card the pane stretches only its width, and height="container" would collapse the chart
+    pipeline = Pipeline(source=InMemorySource(tables={"t": pd.DataFrame({"a": [1, 2]})}), table="t")
+    spec = {"width": "container", "height": "container", "mark": "bar", "encoding": {"y": {"field": "a"}}}
+    card = VegaLiteView(pipeline=pipeline, spec=spec, sizing_mode="stretch_width")
+    assert "height" not in card._get_params()["object"]
+    chat = VegaLiteView(pipeline=pipeline, spec=spec, sizing_mode="stretch_both")
+    assert chat._get_params()["object"]["height"] == "container"

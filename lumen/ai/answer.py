@@ -2161,6 +2161,13 @@ class Answer(param.Parameterized):
         )
 
     def _chart_part(self, view: View):
+        if isinstance(view, VegaLiteView):
+            # A notebook output has no height to stretch into: a chart that
+            # stretches keeps its minimum height, and a faceted chart drawn
+            # taller than that spills over the sections below it
+            view.kwargs = {**view.kwargs, "sizing_mode": "stretch_width", "min_height": None}
+            # The pane may already be drawn, e.g. by its editor while the chart was polished
+            view.update()
         try:
             # Drawn here, because inside the card a failure only becomes a
             # notification once the chat UI has turned those on, and a
