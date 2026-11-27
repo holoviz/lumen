@@ -257,10 +257,10 @@ def test_a_count_with_distinct_by_counts_the_keys(ctx, session):
 
 
 def test_an_ad_hoc_kpi_lists_at_most_ten_of_the_apps_metrics(monkeypatch):
-    from lumen.agent import controls
+    from lumen.agent import _graph
 
     names = [f"m{i}" for i in range(12)]
-    monkeypatch.setattr(controls, "host_metrics", lambda context: dict.fromkeys(names))
+    monkeypatch.setattr(_graph, "metrics", lambda ops: dict.fromkeys(names))
     session = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), _model())
     try:
         session.add_sql("total", "SELECT SUM(t_cap) AS total FROM turbines")
