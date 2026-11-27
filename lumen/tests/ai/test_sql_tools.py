@@ -216,9 +216,25 @@ def test_filter_values_are_coerced():
     ("SELECT COUNT(*) FROM a UNION SELECT COUNT(*) FROM b", False),
     ("SELECT (SELECT MAX(b.v) FROM b WHERE b.id = a.id) FROM a", False),
     ("SELECT UNNEST(LIST(x)) FROM t", False),
+    ("SELECT 'Total' AS label, SUM(x) FROM t", True),
+    ("SELECT COUNT(*) AS n, CURRENT_DATE AS as_of FROM t", True),
+    ("SELECT 'Total' AS label, x FROM t", False),
+    ("SELECT 'Total' AS label FROM t", False),
+    ("SELECT 'Total' AS label, UNNEST(LIST(x)) FROM t", False),
+    ("SELECT 'Total' AS label, SUM(x) OVER () FROM t", False),
 ])
 def test_sql_is_scalar_aggregate(sql, expected):
     assert sql_is_scalar_aggregate(sql, "duckdb") is expected
+
+
+@pytest.mark.parametrize("sql, dialect, expected", [
+    # Postgres returns a row per value; DuckDB returns one list in one row
+    ("SELECT COUNT(*), generate_series(1, 3) FROM t", "postgres", False),
+    ("SELECT COUNT(*), generate_series(1, 3) FROM t", "duckdb", True),
+    ("SELECT COUNT(*), regexp_split_to_table('a,b', ',') FROM t", "postgres", False),
+])
+def test_sql_is_scalar_aggregate_with_series_functions(sql, dialect, expected):
+    assert sql_is_scalar_aggregate(sql, dialect) is expected
 
 
 def test_referenced_columns():
