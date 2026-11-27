@@ -27,7 +27,9 @@ from panel_material_ui import Card
 import lumen.ai.answer as answer_module
 
 from lumen.ai.actor import NullStep
-from lumen.ai.agents import ChatAgent, SQLAgent, VegaLiteAgent
+from lumen.ai.agents import (
+    AnalysisAgent, ChatAgent, SQLAgent, VegaLiteAgent,
+)
 from lumen.ai.agents.hvplot import hvPlotAgent
 from lumen.ai.agents.sql import make_sql_model
 from lumen.ai.answer import (
@@ -2931,3 +2933,12 @@ async def test_chat_leaves_the_configured_agents_untouched(frame_source):
     configure(agents=[agent])
     assert (await chat(frame_source, llm=Named("A")).aask("How many rows?")).value == "answered by A"
     assert agent.llm is None
+
+
+async def test_aask_leaves_the_callers_agent_lists_alone(frame_source):
+    Named = _named_chat_llm_setup(["ChatAgent", "AnalysisAgent"])
+    analysis = AnalysisAgent(analyses=[])
+    conditions = list(analysis.conditions)
+    for _ in range(2):
+        await aask(frame_source, "How many rows?", llm=Named("A"), agents=[ChatAgent(), analysis])
+    assert analysis.conditions == conditions
