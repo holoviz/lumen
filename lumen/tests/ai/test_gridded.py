@@ -432,6 +432,20 @@ def test_hvplotuiview_uses_grid_explorer_for_gridded(simple_dataset_3d_pipeline)
     pn.panel(panel).get_root()  # must not raise
 
 
+def test_hvplotview_slides_over_a_time_axis_the_sql_derived(simple_dataset_3d):
+    """An answer whose SQL derives its time axis (CAST(time AS DATE) AS date)
+    gets a dataset with that axis as a dim, so it can page over it (gh-2443)."""
+    source = XArraySQLSource(_dataset=simple_dataset_3d).create_sql_expr_source({
+        "daily": "SELECT CAST(time AS DATE) AS date, lat, lon, air FROM air"
+    })
+    pipeline = Pipeline(source=source, table="daily")
+    assert set(pipeline.get_dataset().dims) == {"date", "lat", "lon"}
+    view = hvPlotView(pipeline=pipeline, kind="image", x="lon", y="lat", z="air", groupby="date")
+    plot = view.get_plot(view.get_data())
+    assert isinstance(plot, (hv.DynamicMap, hv.HoloMap))
+    hv.render(plot)
+
+
 def test_hvplotuiview_uses_dataframe_explorer_for_tabular(tabular_pipeline):
     """A non-xarray pipeline still uses the dataframe explorer."""
     view = hvPlotUIView(pipeline=tabular_pipeline, kind="scatter", x="x", y="y")
