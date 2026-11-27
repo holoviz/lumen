@@ -28,6 +28,7 @@ from .catalog import CATALOG_KEY, ProjectCatalog
 from .data_section import (
     SECTION_ID as DATA_SECTION_ID, data_section, redirect_moved_admin_pages,
 )
+from .metadata import DESCRIPTIONS_FILE, DESCRIPTIONS_KEY, DescriptionStore
 from .metrics import (
     METRICS_KEY, ProjectMetrics, serve_data, serve_lumen,
 )
@@ -410,10 +411,12 @@ def build_routes(
     uploads = Uploads(upload_dir or project_dir / UPLOAD_DIR, sources, upload_formats(upload_handlers))
     # Uploads take the refs they were given, after the served sources took theirs.
     uploads.restore()
+    descriptions = DescriptionStore(uploads.directory / DESCRIPTIONS_FILE)
+    descriptions.restore(sources)
     editor_options = dict(params.pop("editor_options", {}))
     context = {
         **editor_options.get("context", {}), SOURCES_KEY: sources, SOURCE_ALIASES_KEY: aliases,
-        UPLOADS_KEY: uploads,
+        UPLOADS_KEY: uploads, DESCRIPTIONS_KEY: descriptions,
     }
     if project is None:
         project = _working_project(context)
@@ -425,6 +428,7 @@ def build_routes(
     # The Data section reads them from the project it edits.
     project.context.setdefault(METRICS_KEY, context[METRICS_KEY])
     project.context.setdefault(CATALOG_KEY, context[CATALOG_KEY])
+    project.context.setdefault(DESCRIPTIONS_KEY, descriptions)
     uploads.project = project
     editor_options["context"] = context
     data = _with_data_section(params)

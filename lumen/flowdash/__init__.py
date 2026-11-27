@@ -28,6 +28,7 @@ from .checks import (
     selection_warnings,
 )
 from .deckgl import DECKGL_ID, DeckGLNode, check_deckgl
+from .metadata import DESCRIPTIONS_KEY, DescriptionStore
 from .nodes import (
     COMPONENTS, DATA_ID, FILTER_ID, FILTER_OPTIONS, METRIC_ID, METRICS_KEY,
     NODE_TIMEOUT, PARAMETER_ID, PIPELINE_TYPE, PREVIEW_ROWS, QUERY_TIMEOUT,
@@ -72,6 +73,7 @@ __all__ = [
     "DATA_ID",
     "DECKGL_ID",
     "DERIVE_ID",
+    "DESCRIPTIONS_KEY",
     "ENTRY_POINT_GROUP",
     "FILTER_ID",
     "FILTER_OPTIONS",
@@ -101,6 +103,7 @@ __all__ = [
     "DataNode",
     "DeckGLNode",
     "DeriveNode",
+    "DescriptionStore",
     "FilterMismatch",
     "FilterNode",
     "GlobalFilterTarget",
