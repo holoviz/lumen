@@ -122,6 +122,12 @@ except ImportError:
     request_filters = None
 
 try:
+    from panel_flowdash.report import PlaceholderHint
+except ImportError:
+    # panel-flowdash releases before report placeholder hints.
+    PlaceholderHint = None
+
+try:
     from panel_flowdash import placement_context
 except ImportError:
     # panel-flowdash 0.1.0rc7 and earlier, where the ``_legacy_`` helpers and ``_next_tick`` stand in for it.
@@ -2677,6 +2683,11 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
 
     _filter_inputs = ("pipeline",)
 
+    # What the agent is told when report text should cite what the view shows.
+    _placeholder_note = (
+        "A view's pipeline is not data: cite the data or value output of the SQL or metric node it reads, "
+        "and put a total, share or ranking the text needs in a SQL or metric node first.")
+
     # Whether a pipeline is connected, so the body says what the view waits for when nothing is drawn.
     _connected = param.Boolean(default=False, precedence=-1)
 
@@ -2685,6 +2696,12 @@ class LumenViewNode(GlobalFilterTarget, LumenNode):
 
     # Whether the view needs a spec to draw; a table, say, draws its pipeline with an empty one.
     requires_spec: ClassVar[bool] = True
+
+    def __flowdash_placeholder_hint__(self) -> Any:
+        """FlowDash's report placeholder hint: the view shows the rows arriving on its pipeline."""
+        if PlaceholderHint is None:
+            return None
+        return PlaceholderHint(upstream="pipeline", note=self._placeholder_note)
 
     # Whether the view takes the dashboard's colour scheme, so it is drawn again when that changes.
     themed: ClassVar[bool] = False

@@ -29,6 +29,7 @@ from .data import data_toolset
 from .edits import KeepTileSlots, add_dashboard_state
 from .explore import OwnNodesOnly
 from .history import stub_superseded_lookups
+from .report import HAS_REPORT_HOOKS, REPORT_INSTRUCTIONS
 from .tool_calls import FlowDashToolCalls
 
 # The instructions stay the same for a whole conversation and for every
@@ -429,6 +430,8 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
         dashboard_instructions = dashboard_tools is None
     if dashboard_tools is None or "add_node" in dashboard_tools:
         text += SELECTION_INSTRUCTIONS + TABLE_INSTRUCTIONS
+    if HAS_REPORT_HOOKS and (dashboard_tools is None or {"edit_report", "set_report"} & set(dashboard_tools)):
+        text += REPORT_INSTRUCTIONS
     if dashboard_tools is not None and "place_tile" in dashboard_tools:
         arrange = " arrange_tiles does that, keeping place_tile sizes." if "arrange_tiles" in dashboard_tools else ""
         filters = GLOBAL_FILTER if "add_filter" in dashboard_tools else LOCAL_FILTER
