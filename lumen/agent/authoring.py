@@ -25,7 +25,7 @@ from ..flowdash import (
     row_ceiling, selection_warnings,
 )
 from ..flowdash.analysis import (
-    _bounded_pipeline, build_analysis, check_analysis_applies, missing_columns,
+    _bounded_pipeline, build_analysis, missing_columns,
 )
 from ..flowdash.access import (
     access_denied_source, can_access_source, sql_access_denied,
@@ -509,13 +509,13 @@ async def add_analysis(
         build_analysis(entry, params, name=analysis, columns=columns)
     except ValueError as exc:
         raise ModelRetry(str(exc)) from exc
+    # The node checks that the analysis applies when it runs, so only the input's size is read here.
+    limit = row_ceiling(ops.editor)
     try:
-        bounded = _bounded_pipeline(pipeline, row_ceiling(ops.editor), QUERY_TIMEOUT)
-        applies = await check_analysis_applies(entry, bounded)
+        bounded = _bounded_pipeline(pipeline, limit, QUERY_TIMEOUT)
     except Exception as exc:
         raise ModelRetry(format_error(exc)) from exc
-    if not applies:
-        raise ModelRetry(f"Analysis {analysis!r} does not apply to {data!r}.")
+    on = f"the first {limit} rows of {data!r}" if len(bounded.data) >= limit else repr(data)
 
     change = _taken(ops, name, ANALYSIS_ID)
     config: dict[str, Any] = {"analysis": analysis, "params": dict(params or {})}
@@ -551,15 +551,15 @@ async def add_analysis(
                 ops.place_tile(target, visible=True)
             except OperationError:
                 pass
-        return f"{verb} analysis node {target!r} ({analysis}) on {data!r}: view ({type(view).__name__})."
+        return f"{verb} analysis node {target!r} ({analysis}) on {on}: view ({type(view).__name__})."
     if frame is not None:
         ceiling = effective_limit(ops.editor, None)
         capped = f" (capped at {ceiling} rows)" if len(frame) >= ceiling else ""
         return (
-            f"{verb} analysis node {target!r} ({analysis}) on {data!r}{capped}: "
+            f"{verb} analysis node {target!r} ({analysis}) on {on}{capped}: "
             f"{format_exploration_result(frame)}\n\nData checks:\n{lint(frame)}"
         )
-    return f"{verb} analysis node {target!r} ({analysis}) on {data!r}."
+    return f"{verb} analysis node {target!r} ({analysis}) on {on}."
 
 
 def add_chart(ctx: RunContext[FlowDashDeps], data: str, name: str, spec: dict[str, Any]) -> str:

@@ -293,3 +293,68 @@ async def test_add_analysis_in_explore_copies_earlier_answer_and_protects_dashbo
         assert explored.node_config("mine_2")["params"] == {"scale": 50.0}
     finally:
         explored.dispose()
+
+
+class RankByName(Analysis):
+    """Sort rows by a column named in a String field parameter."""
+
+    column = param.String(default="amount")
+
+    _field_params = ["column"]
+
+    def __call__(self, pipeline, context):
+        return pipeline.data.sort_values(self.column).reset_index(drop=True)
+
+
+class Broken(Analysis):
+    """Fails with an error that is not a ValueError."""
+
+    def __call__(self, pipeline, context):
+        raise RuntimeError("analysis exploded")
+
+
+@pytest.fixture
+def more(session):
+    session.ops.editor.context["lumen.analyses"] = [NormalizeAmount, InternalOnly, RankByName, Broken]
+    return SimpleNamespace(deps=session.deps)
+
+
+async def set_config(ctx, name, config):
+    from lumen.agent.authoring import CheckedConfig
+
+    async def handler(args):
+        ctx.deps.ops.set_config(args["name"], args["config"])
+        return "ok"
+
+    return await CheckedConfig().wrap_tool_execute(
+        ctx, call=None, tool_def=SimpleNamespace(name="set_config"),
+        args={"name": name, "config": config}, handler=handler,
+    )
+
+
+async def test_set_config_refuses_an_analysis_hidden_from_the_agent(more, session):
+    await add_analysis(more, "sales_rows", "NormalizeAmount", "shares")
+    with pytest.raises(ModelRetry, match="No analysis 'InternalOnly'"):
+        await set_config(more, "shares", {"analysis": "InternalOnly"})
+    assert _graph.config_of(session.ops, "shares")["analysis"] == "NormalizeAmount"
+
+
+async def test_add_analysis_checks_a_string_field_param_against_the_columns(more, session):
+    with pytest.raises(ModelRetry, match="names column\\(s\\) 'nope'"):
+        await add_analysis(more, "sales_rows", "RankByName", "ranked", {"column": "nope"})
+    placed = await add_analysis(more, "sales_rows", "RankByName", "ranked", {"column": "category"})
+    assert placed.startswith("Placed analysis node 'ranked' (RankByName) on 'sales_rows'")
+
+
+async def test_add_analysis_removes_a_node_whose_analysis_fails(more, session):
+    with pytest.raises(ModelRetry, match="analysis exploded"):
+        await add_analysis(more, "sales_rows", "Broken", "broken")
+    assert "broken" not in _graph.nodes(session.ops)
+
+
+async def test_add_analysis_says_when_it_ran_on_capped_input(more, session):
+    from lumen.flowdash.nodes import set_row_ceiling
+
+    set_row_ceiling(session.ops.editor, 2)
+    placed = await add_analysis(more, "sales_rows", "NormalizeAmount", "shares")
+    assert placed.startswith("Placed analysis node 'shares' (NormalizeAmount) on the first 2 rows of 'sales_rows'")

@@ -26,7 +26,7 @@ from collections.abc import Mapping, Sequence
 from concurrent.futures import (
     ThreadPoolExecutor, TimeoutError as FutureTimeout,
 )
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal
 
 import pandas as pd
@@ -62,6 +62,9 @@ _ANALYSIS_NODES: weakref.WeakKeyDictionary[Any, weakref.WeakSet] = weakref.WeakK
 # Default timeout (seconds) for running an async Analysis hook synchronously from ``_resolve``.
 ANALYSIS_TIMEOUT = 30
 
+# Entries already warned about, since the host's analyses are normalized on every lookup.
+_WARNED: set[tuple[str, int]] = set()
+
 
 def _analysis_base() -> type[Analysis]:
     """Import ``Analysis`` lazily so importing ``lumen.flowdash`` needs no AI extras."""
@@ -95,7 +98,9 @@ def _normalize_analyses(raw: Any) -> dict[str, Any]:
     valid: dict[str, Any] = {}
     for name, entry in entries:
         if not name or not _is_analysis(entry):
-            logger.warning("Ignoring non-Analysis entry %r in %s.", name, ANALYSES_KEY)
+            if (name, id(entry)) not in _WARNED:
+                _WARNED.add((name, id(entry)))
+                logger.warning("Ignoring non-Analysis entry %r in %s.", name, ANALYSES_KEY)
             continue
         valid[name] = entry
     return valid
@@ -136,11 +141,15 @@ def bind_analysis(editor: Any, analysis: Any, name: str | None = None) -> str:
 
 
 def unbind_analysis(editor: Any, name: str) -> None:
-    """Forget an analysis bound with ``bind_analysis``."""
+    """Forget an analysis bound with ``bind_analysis``, refreshing any nodes naming it."""
     existing = host_analyses(editor.context)
-    if name in existing:
-        existing.pop(name, None)
-        editor.context[ANALYSES_KEY] = existing
+    if name not in existing:
+        return
+    existing.pop(name, None)
+    editor.context[ANALYSES_KEY] = existing
+    for node in list(_ANALYSIS_NODES.get(editor, ())):
+        if node.analysis == name:
+            node._refresh()
 
 
 def missing_analysis(name: str, analyses: Mapping[str, Any]) -> str:
@@ -237,16 +246,20 @@ def build_analysis(
 
     cls = entry if isinstance(entry, type) else type(entry)
     instance = cls.instance()
+    fields = [f for f in getattr(cls, "_field_params", ()) or () if f in instance.param]
 
     # Populate column-selector choices before applying params so Selector validation passes.
     if columns is not None:
         col_list = list(columns)
-        for field in getattr(cls, "_field_params", ()) or ():
-            if field in instance.param:
+        for field in fields:
+            if isinstance(instance.param[field], param.Selector):
                 instance.param[field].objects = col_list
 
-    # Preserve non-default values configured on a host-registered Analysis instance.
+    # Preserve the columns and non-default values configured on a host-registered Analysis instance.
     if not isinstance(entry, type):
+        if list(entry.columns) != list(instance.columns):
+            with param.edit_constant(instance):
+                instance.columns = list(entry.columns)
         for pname in allowed:
             if pname in given:
                 continue
@@ -254,14 +267,21 @@ def build_analysis(
             if val != cls.param[pname].default:
                 try:
                     setattr(instance, pname, val)
-                except Exception:
-                    pass
+                except (ValueError, TypeError) as exc:
+                    logger.debug("Dropped %s=%r configured on analysis %r: %s", pname, val, label, exc)
 
     for key, value in given.items():
         try:
             setattr(instance, key, value)
         except (ValueError, TypeError) as exc:
             raise ValueError(f"Invalid value for parameter {key!r} of analysis {label!r}: {exc}") from exc
+        if columns is not None and key in fields and not isinstance(instance.param[key], param.Selector):
+            names = [value] if isinstance(value, str) else value if isinstance(value, (list, tuple)) else []
+            if unknown := [n for n in names if n not in columns]:
+                raise ValueError(
+                    f"Parameter {key!r} of analysis {label!r} names column(s) {', '.join(map(repr, unknown))}, "
+                    f"not in pipeline columns ({', '.join(columns) or 'none'})."
+                )
     return instance
 
 
@@ -286,6 +306,10 @@ async def check_analysis_applies(entry: Any, pipeline: Pipeline) -> bool:
 
 
 def _check_applies_sync(entry: Any, pipeline: Pipeline, timeout: float = ANALYSIS_TIMEOUT) -> bool:
+    # The base check only looks for the columns, which missing_columns already did.
+    cls = entry if isinstance(entry, type) else type(entry)
+    if getattr(cls.applies, "__func__", None) is _analysis_base().applies.__func__:
+        return True
     result = entry.applies(pipeline)
     if inspect.isawaitable(result):
         return bool(_run_coroutine_sync(result, timeout=timeout))
@@ -313,27 +337,28 @@ class AnalysisResult:
     pipeline: Pipeline | None = None
     data: pd.DataFrame | None = None
     view: Any = None
-    analysis: Any = None
+    # The row ceiling when the input had at least that many rows, so the analysis saw only those.
+    capped_at: int | None = None
 
 
-def classify_result(raw: Any, analysis_name: str, instance: Any) -> AnalysisResult:
+def classify_result(raw: Any, analysis_name: str) -> AnalysisResult:
     """Classify the return value of ``Analysis.__call__`` into pipeline/data or view outputs."""
     from ..views.base import View as LumenView
 
     if raw is None:
-        return AnalysisResult("empty", analysis=instance)
+        return AnalysisResult("empty")
     if isinstance(raw, Pipeline):
-        return AnalysisResult("pipeline", pipeline=raw, analysis=instance)
+        return AnalysisResult("pipeline", pipeline=raw)
     if isinstance(raw, pd.DataFrame) or is_narwhals(raw):
         df = as_pandas(raw)
-        return AnalysisResult("data", pipeline=_frame_pipeline(df, analysis_name), data=df, analysis=instance)
+        return AnalysisResult("data", pipeline=_frame_pipeline(df, analysis_name), data=df)
     if isinstance(raw, LumenView):
         if getattr(raw, "_panel", None) is None:
             raw.update()
-        return AnalysisResult("view", view=raw.panel, analysis=instance)
+        return AnalysisResult("view", view=raw.panel)
     if isinstance(raw, pn.viewable.Viewable):
-        return AnalysisResult("view", view=raw, analysis=instance)
-    return AnalysisResult("view", view=pn.panel(raw), analysis=instance)
+        return AnalysisResult("view", view=raw)
+    return AnalysisResult("view", view=pn.panel(raw))
 
 
 def _bounded_pipeline(pipeline: Pipeline, limit: int, timeout: float) -> Pipeline:
@@ -380,7 +405,8 @@ def run_analysis(
     raw = instance(bounded, context)
     if inspect.isawaitable(raw):
         raw = _run_coroutine_sync(raw, timeout=max(timeout, ANALYSIS_TIMEOUT))
-    return classify_result(raw, label, instance)
+    capped = limit if len(bounded.data) >= limit else None
+    return replace(classify_result(raw, label), capped_at=capped)
 
 
 def check_analysis_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
@@ -473,6 +499,7 @@ class AnalysisNode(GlobalFilterTarget, LumenNode):
     _filter_inputs = ("pipeline",)
 
     def __init__(self, **params):
+        self._filtered: tuple[Any, Any, AnalysisResult] | None = None
         super().__init__(**params)
         _track_analysis(self)
 
@@ -533,36 +560,54 @@ class AnalysisNode(GlobalFilterTarget, LumenNode):
                 return pn.pane.Markdown("Waiting for a pipeline")
             return pn.pane.Markdown("Pick an analysis")
         if self._global_filters and isinstance(self.pipeline, Pipeline):
-            analyses = host_analyses(self._context)
-            entry = analyses.get(self.analysis)
-            if entry is not None:
-                try:
-                    result = run_analysis(
-                        entry,
-                        self._shown(self.pipeline),
-                        self.params,
-                        name=self.analysis,
-                        limit=row_ceiling(self.editor),
-                    )
-                except Exception as exc:
-                    return pn.pane.Alert(str(exc), alert_type="danger")
-        if result.view is not None:
-            return result.view
-        if result.data is not None:
-            return pn.widgets.Tabulator(result.data.head(PREVIEW_ROWS), disabled=True, sizing_mode="stretch_both")
-        if result.pipeline is not None:
+            try:
+                result = self._filtered_result()
+            except Exception as exc:
+                return pn.pane.Alert(str(exc), alert_type="danger")
+        if result.kind == "view":
+            body = result.view
+        elif result.kind == "data":
+            body = pn.widgets.Tabulator(result.data.head(PREVIEW_ROWS), disabled=True, sizing_mode="stretch_both")
+        elif result.kind == "pipeline":
             preview = fetch(result.pipeline, PREVIEW_ROWS)
-            return pn.widgets.Tabulator(preview, disabled=True, sizing_mode="stretch_both")
-        return pn.pane.Markdown(f"{self.analysis}: no output")
+            body = pn.widgets.Tabulator(preview, disabled=True, sizing_mode="stretch_both")
+        else:
+            return pn.pane.Markdown(f"{self.analysis}: no output")
+        if result.capped_at is None:
+            return body
+        note = pn.pane.Markdown(
+            f"Ran on the first {result.capped_at:,} rows of the input.", styles={"font-size": "0.85em"}, margin=(0, 10)
+        )
+        return pn.Column(note, body, sizing_mode="stretch_both")
+
+    def _filtered_result(self) -> AnalysisResult:
+        """
+        The analysis run on the globally filtered input. An analysis is not a
+        query the filters can be pushed into, so they apply to its input and
+        it runs again; the result is kept until the node or the filters change.
+        """
+        cached = self._filtered
+        if cached is not None and cached[0] is self._object and cached[1] is self._global_filters:
+            return cached[2]
+        analyses = host_analyses(self._context)
+        entry = analyses.get(self.analysis)
+        if entry is None:
+            raise ValueError(missing_analysis(self.analysis, analyses))
+        result = run_analysis(
+            entry, self._shown(self.pipeline), self.params, name=self.analysis, limit=row_ceiling(self.editor),
+        )
+        self._filtered = (self._object, self._global_filters, result)
+        return result
 
     def __flowdash_preview__(self, output: str | None = None) -> Any:
         if self._error is not None or self._object is None:
             return None
         result: AnalysisResult = self._object
-        if output == "view" or (output is None and result.view is not None):
-            if result.view is None:
+        if output == "view" or (output is None and result.kind == "view"):
+            if result.kind != "view":
                 return None
-            return f"{self.analysis} view ({type(result.view).__name__})"
+            capped = f", ran on the first {result.capped_at} rows" if result.capped_at else ""
+            return f"{self.analysis} view ({type(result.view).__name__}{capped})"
         if output == "data" and result.data is not None:
             return _preview_frame(result.data.head(PREVIEW_ROWS), len(result.data))
         if result.pipeline is not None:

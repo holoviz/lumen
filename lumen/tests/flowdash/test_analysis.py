@@ -17,8 +17,11 @@ from lumen.flowdash import (
     bind_analysis, bind_source, bound_analyses, check_analysis_config,
     unbind_analysis,
 )
-from lumen.flowdash.analysis import analysis_choices, analysis_presets
+from lumen.flowdash.analysis import (
+    analysis_choices, analysis_presets, build_analysis, run_analysis,
+)
 from lumen.flowdash.app import build_routes
+from lumen.flowdash.nodes import set_row_ceiling
 from lumen.pipeline import Pipeline
 from lumen.sources.base import InMemorySource
 from lumen.sources.duckdb import DuckDBSource
@@ -325,3 +328,122 @@ def test_build_routes_accepts_analyses_without_marking_sensitive(tmp_path):
         assert "ScaleAmount" in bound_analyses(app._editor)
     finally:
         app._editor.dispose()
+
+
+class RankByName(Analysis):
+    """Rank rows by a column named in a String field parameter."""
+
+    column = param.String(default="amount")
+
+    _field_params = ["column"]
+
+    def __call__(self, pipeline, context):
+        return pipeline.data.sort_values(self.column).reset_index(drop=True)
+
+
+class Broken(Analysis):
+    """Fails with an error that is not a ValueError."""
+
+    def __call__(self, pipeline, context):
+        raise RuntimeError("analysis exploded")
+
+
+def test_a_field_param_that_is_not_a_selector_is_checked_against_the_columns():
+    columns = ["category", "amount"]
+    assert build_analysis(RankByName, {"column": "category"}, columns=columns).column == "category"
+    with pytest.raises(ValueError, match="names column\\(s\\) 'nope', not in pipeline columns"):
+        build_analysis(RankByName, {"column": "nope"}, columns=columns)
+    # Without the columns there is nothing to check against.
+    assert build_analysis(RankByName, {"column": "nope"}).column == "nope"
+    # A Selector field still gets the columns as its objects.
+    assert build_analysis(TopByColumn, {"column": "amount"}, columns=columns).param["column"].objects == columns
+
+
+def test_a_bad_string_field_param_is_refused_in_the_config(duck):
+    editor, ops = _setup(duck, [RankByName])
+    try:
+        ops.add_node(ANALYSIS_ID, {"analysis": "RankByName"}, name="ranked")
+        ops.connect("sales.pipeline", "ranked.pipeline")
+        with pytest.raises(OperationError, match="names column\\(s\\) 'nope'"):
+            ops.set_config("ranked", {"params": {"column": "nope"}})
+        ops.set_config("ranked", {"params": {"column": "category"}})
+        assert _output(ops, "ranked", "data")["category"].tolist() == ["A", "A", "B"]
+    finally:
+        editor.dispose()
+
+
+def test_a_host_instance_keeps_its_columns():
+    configured = RankByName.instance(name="by_label")
+    with param.edit_constant(configured):
+        configured.columns = ["label"]
+    assert build_analysis(configured).columns == ["label"]
+
+
+def test_an_analysis_on_a_capped_input_says_so(duck):
+    editor, ops = _setup(duck, [SummaryView])
+    try:
+        sales = _output(ops, "sales", "pipeline")
+        assert run_analysis(SummaryView, sales).capped_at is None
+        assert run_analysis(SummaryView, sales, limit=2).capped_at == 2
+
+        set_row_ceiling(editor, 2)
+        ops.add_node(ANALYSIS_ID, {"analysis": "SummaryView"}, name="summary")
+        ops.connect("sales.pipeline", "summary.pipeline")
+        node = _component(ops, "summary")
+        body = node._body()
+        assert isinstance(body, pn.Column) and "first 2 rows" in body[0].object
+        assert "ran on the first 2 rows" in node.__flowdash_preview__()
+    finally:
+        editor.dispose()
+
+
+def test_an_analysis_raising_another_error_shows_it_on_the_node(duck):
+    editor, ops = _setup(duck, [Broken])
+    try:
+        ops.add_node(ANALYSIS_ID, {"analysis": "Broken"}, name="broken")
+        ops.connect("sales.pipeline", "broken.pipeline")
+        node = _component(ops, "broken")
+        assert node._object is None and "analysis exploded" in node._error
+    finally:
+        editor.dispose()
+
+
+def test_global_filters_run_the_analysis_once_per_change(duck, monkeypatch):
+    from panel_flowdash.selection import Predicate
+
+    from lumen.flowdash import analysis as module
+
+    editor, ops = _setup(duck, [SummaryView])
+    try:
+        ops.add_node(ANALYSIS_ID, {"analysis": "SummaryView"}, name="summary")
+        ops.connect("sales.pipeline", "summary.pipeline")
+        node = _component(ops, "summary")
+        runs = []
+        real = module.run_analysis
+        monkeypatch.setattr(module, "run_analysis", lambda *a, **k: runs.append(1) or real(*a, **k))
+
+        node.__flowdash_apply_filters__({"category": Predicate(field="category", op="in", values=["A"])})
+        assert "15" in node._body().object
+        assert "15" in node._body().object
+        assert len(runs) == 1
+
+        node.__flowdash_apply_filters__({"category": Predicate(field="category", op="in", values=["B"])})
+        assert "20" in node._body().object
+        assert len(runs) == 2
+    finally:
+        editor.dispose()
+
+
+def test_unbinding_an_analysis_refreshes_the_nodes_naming_it(duck):
+    editor, ops = _setup(duck, [])
+    try:
+        bind_analysis(editor, ScaleAmount)
+        ops.add_node(ANALYSIS_ID, {"analysis": "ScaleAmount"}, name="scaled")
+        ops.connect("sales.pipeline", "scaled.pipeline")
+        node = _component(ops, "scaled")
+        assert node._error is None
+
+        unbind_analysis(editor, "ScaleAmount")
+        assert node._object is None and "no Lumen analyses" in node._error
+    finally:
+        editor.dispose()
