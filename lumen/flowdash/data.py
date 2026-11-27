@@ -213,7 +213,9 @@ def display_path(text: str, roots: t.Sequence[t.Any] = ()) -> str:
     if "://" in text:
         return redact_secrets(text)
     path = Path(text)
-    if not path.is_absolute():
+    # A leading "/" is absolute on POSIX but not on Windows (no drive letter), yet a
+    # path built or stored with forward slashes means the same thing on both.
+    if not path.is_absolute() and not text.startswith("/"):
         return text.replace("\\", "/")
     for root in roots:
         try:
@@ -277,7 +279,12 @@ def _location(source: t.Any) -> str:
 
 
 def _day(when: t.Any) -> str:
-    return f"{when.astimezone():%-d %b}" if when is not None else ""
+    # %-d (no leading zero) is a glibc/macOS strftime extension; %#d is its Windows
+    # equivalent and neither works on the other, so format the day as a plain int.
+    if when is None:
+        return ""
+    local = when.astimezone()
+    return f"{local.day} {local:%b}"
 
 
 def source_summaries(

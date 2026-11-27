@@ -431,3 +431,34 @@ def test_files_are_shown_relative_to_the_project_or_by_name(tmp_path):
     assert display_path("/srv/elsewhere/owners.parquet", [tmp_path]) == "owners.parquet"
     assert display_path("turbines/turbines.csv", [tmp_path]) == "turbines/turbines.csv"
     assert display_path(SECRET_URL) == "postgresql://ana:***@db.example.com/fleet"
+
+
+def test_a_posix_style_path_is_shown_by_name_even_under_windows_path_semantics(monkeypatch):
+    # On Windows, Path("/srv/x").is_absolute() is False (no drive letter), unlike on
+    # POSIX; display_path must still recognize the leading "/" as absolute so it
+    # falls back to the file name instead of showing the server's folders raw.
+    import pathlib
+
+    from lumen.flowdash.data import display_path
+
+    monkeypatch.setattr(pathlib, "Path", pathlib.PureWindowsPath)
+    assert display_path("/srv/elsewhere/owners.parquet") == "owners.parquet"
+
+
+def test_the_day_a_source_was_added_has_no_platform_specific_format_code():
+    import datetime as dt
+
+    from lumen.flowdash.data import _day
+
+    # %-d (glibc/macOS) and %#d (Windows) are mutually incompatible strftime flags;
+    # _day must avoid both so it does not raise on either platform.
+    assert _day(dt.datetime(2026, 11, 7, tzinfo=dt.UTC)) == "7 Nov"
+    assert _day(None) == ""
+
+
+def test_a_windows_style_location_names_a_source_by_its_file_stem(tmp_path, opened):
+    # re.split(r"[/:?@]", ...) alone leaves Windows backslashes untouched, so a local
+    # path's drive letter and directories were swept into the ref instead of the stem.
+    uploads = Uploads(tmp_path / "uploads", {})
+    preview, _ = uploads.read_location(r"C:\Users\ana\Documents\plant.db", app=Admin())
+    assert preview.ref == "plant"

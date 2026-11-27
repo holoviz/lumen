@@ -920,7 +920,9 @@ class Uploads:
 
         if not _is_admin(app):
             raise UploadError("Only admins can connect sources.")
-        stem = re.split(r"[/:?@]", location.strip().rstrip("/"))[-1].rsplit(".", 1)[0] if location else ""
+        # Backslash joins the URL/path separators so a Windows local path's drive
+        # letter and directories are not swept into the stem with it.
+        stem = re.split(r"[/\\:?@]", location.strip().rstrip("/"))[-1].rsplit(".", 1)[0] if location else ""
         # A source listed without its credentials is replaced by connecting it again under its name.
         ref = self._ref(name or stem or "source", free=self._broken)
         try:
