@@ -24,6 +24,9 @@ from ..flowdash import (
     hidden_tables, pipeline_columns, primed_result, result_sql, row_ceiling,
     selection_warnings,
 )
+from ..flowdash.access import (
+    access_denied_source, can_access_source, sql_access_denied,
+)
 from ..flowdash.catalog import hidden_reads, turned_off
 from ..flowdash.deckgl import (
     fit_view_state, layer_type, map_summary, position_columns,
@@ -115,8 +118,13 @@ async def _test_run(src, sql: str, limit: int, context: Mapping[str, Any] | None
     try:
         sql = clean_sql(str(sql).strip(), src.dialect, prettify=True)
         check_query(sql, src)
-        if context is not None and (read := hidden_reads(sql, src, hidden_tables(src, context))):
-            raise ModelRetry(turned_off(read))
+        if context is not None:
+            if not can_access_source(src, context):
+                raise ModelRetry(access_denied_source(src.name))
+            if denied := sql_access_denied(sql, src, context):
+                raise ModelRetry(denied)
+            if read := hidden_reads(sql, src, hidden_tables(src, context)):
+                raise ModelRetry(turned_off(read))
         root, statement = expand(sql, src)
         statement = result_sql(root, statement, limit)
     except (ValueError, sqlglot.errors.SqlglotError) as exc:

@@ -69,6 +69,7 @@ import panel as pn
 import param
 
 from ..sources.base import Source
+from .access import is_admin
 from .project import (
     Problem, Project, ProjectError, ProjectSection, Section, register_section,
 )
@@ -556,13 +557,6 @@ def _has_identity(app: t.Any) -> bool:
     return bool(getattr(getattr(app, "_identity", None), "user", None))
 
 
-def _is_admin(app: t.Any) -> bool:
-    try:
-        return app is not None and bool(app._still_admin())
-    except Exception:
-        return False
-
-
 def _is_uploader(app: t.Any, upload: Upload) -> bool:
     """Whether app's session is the one who made upload; a record kept before uploaders were recorded is no one's,
     and neither is one made or checked by a session without a real identity, since every such session would
@@ -616,18 +610,18 @@ class Uploads:
         settings = self.settings()
         if not settings.enabled or app is None:
             return False
-        if not settings.groups or _is_admin(app):
+        if not settings.groups or is_admin(app):
             return True
         identity = getattr(app, "_identity", None)
         return identity is not None and identity.in_groups(settings.groups)
 
     def may_upload(self, app: t.Any) -> bool:
         """Whether ``app``'s session may upload: an admin always, anyone else as ``offered`` says."""
-        return _is_admin(app) or self.offered(app)
+        return is_admin(app) or self.offered(app)
 
     def may_delete(self, upload: Upload | None, app: t.Any) -> bool:
         """Whether ``app``'s session may delete ``upload``: an admin always, or whoever uploaded it, themself."""
-        return upload is not None and (_is_admin(app) or _is_uploader(app, upload))
+        return upload is not None and (is_admin(app) or _is_uploader(app, upload))
 
     # ------------------------------------------------------------------
     # The uploads
@@ -923,7 +917,7 @@ class Uploads:
         """
         from .nodes import listed_tables
 
-        if not _is_admin(app):
+        if not is_admin(app):
             raise UploadError("Only admins can connect sources.")
         # Backslash joins the URL/path separators so a Windows local path's drive
         # letter and directories are not swept into the stem with it.
@@ -955,7 +949,7 @@ class Uploads:
         Only an admin may. Raises ``UploadError`` with why it was refused or
         could not be read.
         """
-        if not _is_admin(app):
+        if not is_admin(app):
             raise UploadError("Only admins can connect sources.")
         location = location.strip()
         if "://" not in location and Path(location).exists():
@@ -990,7 +984,7 @@ class Uploads:
 
     def disconnect(self, ref: str, *, app: t.Any) -> list[Problem]:
         """Remove the source an admin connected as ``ref``, for everyone, and its catalog settings. Only an admin may."""
-        if not _is_admin(app):
+        if not is_admin(app):
             return [Problem("Only admins can remove sources, so this was not removed.")]
         with self._lock:
             connection = self._connections.pop(ref, None)
@@ -1084,7 +1078,7 @@ class Uploads:
 
     def recover(self, upload_id: str, *, app: t.Any) -> Upload:
         """Bring back the deleted upload ``upload_id`` from the trash, under a free name if its own was taken since."""
-        if not _is_admin(app):
+        if not is_admin(app):
             raise UploadError("Only admins can bring back deleted uploads.")
         trash = self._trash_folder(upload_id)
         try:

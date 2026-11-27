@@ -70,9 +70,10 @@ def source_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, 
     """
     from panel_flowdash import dashboard_context
 
-    from .nodes import SOURCE_ALIASES_KEY, host_sources
+    from .access import authorized_sources
+    from .nodes import SOURCE_ALIASES_KEY
 
-    sources = host_sources()
+    sources = authorized_sources()
     if not sources:
         return {}
     ref = config.get("ref")
@@ -88,16 +89,21 @@ def table_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, l
     tables of its source: the connected one, or else the one its ref names.
     With a source connected, a ref it still holds is only shown as ignored.
     """
-    from .nodes import listed_tables, lookup_source
+    from .access import authorized_tables, can_access_source
+    from .nodes import lookup_source
 
     source, ref = inputs.get("source"), config.get("ref")
     if source is None:
         choices: dict[str, Any] = dict(source_choices(config, inputs))
         source = lookup_source(ref) if ref else None
+        if source is not None and not can_access_source(source):
+            source = None
     else:
         choices = {"ref": {f"{ref} ({IGNORED_REF})": ref}} if ref else {}
+        if isinstance(source, Source) and not can_access_source(source):
+            source = None
     if isinstance(source, Source):
-        choices["table"] = sorted(listed_tables(source))
+        choices["table"] = sorted(authorized_tables(source))
     return choices
 
 
@@ -129,9 +135,17 @@ def _tables(source: Source) -> list[str]:
 
 
 def _host_sources(context: Mapping[str, Any]) -> dict[str, Source]:
-    from .nodes import SOURCES_KEY
+    from .access import authorized_sources
 
-    return {ref: source for ref, source in (context.get(SOURCES_KEY) or {}).items() if isinstance(source, Source)}
+    return {ref: source for ref, source in authorized_sources(context).items() if isinstance(source, Source)}
+
+
+def _authorized_cached_tables(source: Source, context: Mapping[str, Any]) -> list[str]:
+    from .access import restricted_tables
+
+    restricted = restricted_tables(source, context)
+    tables = _tables(source)
+    return [t for t in tables if t not in restricted] if restricted else tables
 
 
 def source_presets(context: Mapping[str, Any]) -> list[dict[str, Any]]:
@@ -145,7 +159,7 @@ def source_presets(context: Mapping[str, Any]) -> list[dict[str, Any]]:
             "config": {"ref": ref},
         }
         for ref, source in _host_sources(context).items()
-        for tables in [_tables(source)]
+        for tables in [_authorized_cached_tables(source, context)]
     ]
 
 
@@ -170,7 +184,7 @@ def table_presets(context: Mapping[str, Any]) -> list[dict[str, Any]]:
             "config": {"ref": ref, "table": table},
         }
         for ref, source in _host_sources(context).items()
-        for table in _tables(source)
+        for table in _authorized_cached_tables(source, context)
     ]
 
 
@@ -194,9 +208,9 @@ def metric_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, 
     Offer a ``Lumen/metric`` node the metrics the host defines and, for the
     one picked, its measures, dimensions, grains and the columns to sort by.
     """
-    from .nodes import host_metrics
+    from .access import authorized_metrics
 
-    metrics = host_metrics()
+    metrics = authorized_metrics()
     if not metrics:
         return {}
     choices: dict[str, Any] = {"metric": list(metrics)}
@@ -218,18 +232,19 @@ def metric_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, 
 
 def parameter_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, Any]:
     """Offer a ``Lumen/parameter`` node the names the host's metrics take as parameters."""
-    from .nodes import host_metrics, metric_parameter_names
+    from .access import authorized_metrics
+    from .nodes import metric_parameter_names
 
-    names = metric_parameter_names(host_metrics())
+    names = metric_parameter_names(authorized_metrics())
     return {"parameter": names} if names else {}
 
 
 def metric_presets(context: Mapping[str, Any]) -> list[dict[str, Any]]:
     """A ``Lumen/metric`` palette entry per metric the host defines, with the metric filled in."""
-    from .nodes import host_metrics
+    from .access import authorized_metrics
 
     presets = []
-    for name, metric in host_metrics(context).items():
+    for name, metric in authorized_metrics(context).items():
         config: dict[str, Any] = {"metric": name}
         if metric.form == "structured":
             config["measures"] = list(metric.measures)[:1]

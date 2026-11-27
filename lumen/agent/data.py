@@ -30,6 +30,10 @@ from ..flowdash import (
     SORT_ID, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID, assistant_tables,
     bound_sources, check_query, hidden_tables, listed_tables, lookup_source,
 )
+from ..flowdash.access import (
+    access_denied_source, access_denied_tables, authorized_sources,
+    authorized_tables, can_access_source, can_access_table, sql_access_denied,
+)
 from ..flowdash.catalog import hidden_reads, turned_off
 from ..flowdash.metrics import Metric
 from ..flowdash.nodes import effective_limit
@@ -76,15 +80,18 @@ def _sources_by_name(deps: FlowDashDeps) -> dict[str, tuple[str | None, Source |
     ``(node or None, source)``. A node that has not resolved has no source.
     """
     ops = deps.ops
+    context = ops.editor.context
     found: dict[str, tuple[str | None, Source | None]] = {}
     for name in _graph.nodes(ops, SOURCE_ID):
         try:
             value = _graph.output(ops, name, "source")
         except OperationError:
             value = None
+        if isinstance(value, Source) and not can_access_source(value, context):
+            continue
         found[name] = (name, value if isinstance(value, Source) else None)
     shown = {id(value) for _, value in found.values() if value is not None}
-    for ref, value in bound_sources(ops.editor).items():
+    for ref, value in authorized_sources(context).items():
         if id(value) not in shown:
             found[ref if ref not in found else f"app:{ref}"] = (None, value)
             shown.add(id(value))
@@ -93,15 +100,21 @@ def _sources_by_name(deps: FlowDashDeps) -> dict[str, tuple[str | None, Source |
 
 def _find(deps: FlowDashDeps, source: str | None, table: str | None = None) -> tuple[str, str | None, Source]:
     found = _sources_by_name(deps)
+    context = deps.ops.editor.context
     if source in found:
         name = source
-    elif source is not None and (value := lookup_source(source, deps.ops.editor.context)) is not None:
+    elif source is not None and (value := lookup_source(source, context)) is not None:
+        if not can_access_source(value, context):
+            raise ModelRetry(access_denied_source(source))
         name = next((n for n, (_, v) in found.items() if v is value), source)
         found.setdefault(name, (None, value))
     else:
         named = list(found)
         if table is not None and len(found) > 1:
-            named = [n for n, (_, v) in found.items() if v is not None and table.strip() in v.get_tables()] or named
+            named = [
+                n for n, (_, v) in found.items()
+                if v is not None and table.strip() in authorized_tables(v, context)
+            ] or named
         if len(named) != 1:
             listed = ", ".join(found) or "none"
             raise ModelRetry(f"No source {source!r}. The sources are: {listed}.")
@@ -109,6 +122,8 @@ def _find(deps: FlowDashDeps, source: str | None, table: str | None = None) -> t
     node, value = found[name]
     if not isinstance(value, BaseSQLSource):
         raise ModelRetry(f"Source {name!r} has no SQL source yet.")
+    if not can_access_source(value, context):
+        raise ModelRetry(access_denied_source(name))
     return name, node, value
 
 
@@ -478,7 +493,7 @@ async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None, 
         n=SCHEMA_TABLES_SHOWN, n_others=PROMPT_OTHER_TABLES, include_lineage=False, max_tokens=SCHEMA_MAX_TOKENS,
     )
     text += listing.replace(DEGRADED_NOTE, DESCRIBE_NOTE)
-    if off := len(listed_tables(src)) - len(tables):
+    if off := len(authorized_tables(src, ops.editor.context)) - len(tables):
         text += (f"\n{off} more table{'s are' if off > 1 else ' is'} turned off for the assistant in the app's "
                  f"catalog; an admin can turn {'them' if off > 1 else 'it'} on.")
     return text
@@ -495,9 +510,12 @@ async def describe_table(
         columns: Only these columns.
     """
     name, src = resolve_source(ctx.deps, source, table)
+    context = ctx.deps.ops.editor.context
+    if not can_access_table(src, table, context):
+        return access_denied_tables([table], name)
     if (refusal := _turned_off(ctx.deps, src, table, name)) is not None:
         return refusal
-    tables = assistant_tables(src, ctx.deps.ops.editor.context)
+    tables = assistant_tables(src, context)
     meta = await metaset(src, tables)
     slug = f"{src.name}{SOURCE_TABLE_SEPARATOR}{table.strip()}"
     if slug not in meta.catalog:
@@ -520,10 +538,13 @@ async def distinct_values(
         source: Source name; defaults to the one with the table.
     """
     name, src = resolve_source(ctx.deps, source, table)
+    context = ctx.deps.ops.editor.context
+    if not can_access_table(src, table, context):
+        return access_denied_tables([table], name)
     if (refusal := _turned_off(ctx.deps, src, table, name)) is not None:
         return refusal
     return await execute_distinct_values(
-        table, column, like, sources=_sources(src), metaset=await metaset(src, assistant_tables(src, ctx.deps.ops.editor.context)),
+        table, column, like, sources=_sources(src), metaset=await metaset(src, assistant_tables(src, context)),
         timeout=QUERY_TIMEOUT,
     )
 
@@ -535,11 +556,16 @@ async def run_sql(ctx: RunContext[FlowDashDeps], sql: str, source: str | None = 
         sql: One SELECT or WITH query.
         source: Source name; defaults to the only one.
     """
-    _, src = resolve_input(ctx.deps, source)
+    name, src = resolve_input(ctx.deps, source)
+    context = ctx.deps.ops.editor.context
+    if not can_access_source(src, context):
+        return access_denied_source(name)
     try:
         cleaned = clean_sql(sql.strip(), src.dialect)
         check_query(cleaned, src)
-        if read := hidden_reads(cleaned, src, hidden_tables(src, ctx.deps.ops.editor.context)):
+        if denied := sql_access_denied(cleaned, src, context):
+            return denied
+        if read := hidden_reads(cleaned, src, hidden_tables(src, context)):
             return turned_off(read)
         root, statement = expand(cleaned, src)
     except (ValueError, sqlglot.errors.SqlglotError) as exc:

@@ -113,3 +113,63 @@ def test_the_data_section_shows_the_tables_and_the_metrics(page, tmp_path, monke
     expect(page.locator(".flowdash-admin-content")).to_contain_text("Let people upload data", timeout=20000)
     expect(page.locator(".flowdash-admin-nav-data")).not_to_contain_text("Catalog")
     expect(page.locator(".flowdash-admin-nav-data")).not_to_contain_text("Metrics")
+
+
+RESTRICTED = """\
+general:
+  admins: [someone_else]
+catalog:
+  local:
+    tables:
+      readings:
+        access:
+          allow_users: [someone_else]
+metrics:
+  fleet:
+    description: Turbines and rated capacity
+    source: local
+    table: turbines
+    measures:
+      turbines: COUNT(*)
+  payroll:
+    description: Restricted readings
+    source: local
+    table: readings
+    measures:
+      total: SUM(power_kw)
+"""
+
+
+def test_the_data_section_hides_what_the_session_may_not_access(page, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "turbines.csv").write_text(
+        "p_name,t_state,p_year,p_cap,t_cap\n" + "".join(f"{n},{s},{y},{p},{c}\n" for n, s, y, p, c in ROWS)
+    )
+    (tmp_path / "readings.csv").write_text("p_name,power_kw\nAlta,120.5\nRoscoe,80.25\n")
+    (tmp_path / PROJECT_FILE).write_text(RESTRICTED)
+    routes = build_routes(
+        ["turbines.csv", "readings.csv"], db_path=tmp_path / "dash.db", project=tmp_path / PROJECT_FILE
+    )
+    page.set_viewport_size({"width": 1440, "height": 900})
+    serve_component(page, routes, suffix="/data")
+    base = "{0.scheme}://{0.netloc}".format(urlsplit(page.url))
+
+    expect(page.locator(".lumen-data-title")).to_have_text("Tables", timeout=20000)
+    expect(page.locator(".flowdash-admin-row-local--turbines")).to_be_visible(timeout=15000)
+    expect(page.locator(".lumen-data-source-local")).to_contain_text("1 table")
+    expect(page.locator(".flowdash-admin-row-local--readings")).to_have_count(0)
+
+    page.goto(f"{base}/data?table=local.readings")
+    expect(page.locator(".lumen-data-title")).to_have_text("Tables", timeout=20000)
+    expect(page.locator(".flowdash-admin-catalog-drawer")).to_be_hidden()
+    expect(page.locator("body")).not_to_contain_text("power_kw")
+
+    page.goto(f"{base}/data/metrics")
+    expect(page.locator(".lumen-data-title")).to_have_text("Metrics", timeout=20000)
+    expect(page.locator(".flowdash-admin-row-fleet")).to_be_visible()
+    expect(page.locator(".flowdash-admin-row-payroll")).to_have_count(0)
+
+    page.goto(f"{base}/data/metrics/payroll")
+    expect(page.locator(".lumen-data-title, .lumen-metric-head").first).to_be_visible(timeout=20000)
+    expect(page.locator(".lumen-metric-head")).to_have_count(0)
+    expect(page.locator("body")).not_to_contain_text("Restricted readings")

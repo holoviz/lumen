@@ -47,6 +47,7 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.nodes import MappingNode, SequenceNode
 
+from .access import is_admin
 from .catalog_admin import _USED_CSS, used_html
 from .data import (
     CHECKS, DashboardRef, MetricStatus, metric_statuses, metric_usage,
@@ -55,9 +56,8 @@ from .data import (
 from .metrics import SECTION, metrics_page
 from .metrics_edit import (
     NAME_KEY, NOT_ADMIN_PREVIEW, PREVIEW_ROWS, PREVIEW_TIMEOUT, UNSET,
-    PreviewResult, check_metric, delete_metric, is_admin, literal_blocks,
-    masked, metric_problems, preview_metric, raw_section, replace_metric,
-    save_metric,
+    PreviewResult, check_metric, delete_metric, literal_blocks, masked,
+    metric_problems, preview_metric, raw_section, replace_metric, save_metric,
 )
 
 logger = logging.getLogger(__name__)
@@ -732,9 +732,12 @@ class MetricsSettings(Viewer):
 
     def statuses(self) -> list[MetricStatus]:
         """Each metric of the file as it is now, with whether the app uses it."""
+        from .access import can_access_metric
+
         statuses, general = metric_statuses(self.project)
         self._general = general
-        return statuses
+        context = self.project.context or {}
+        return [status for status in statuses if can_access_metric(status, context, app=self._app)]
 
     def _passes(self, status: MetricStatus) -> bool:
         if self.filter == "problems" and status.check == "valid":

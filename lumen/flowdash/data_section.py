@@ -170,11 +170,25 @@ class DataPage(Viewer):
             section = raw_section(project)
         except Exception:
             section = {}
+        from .access import (
+            can_access_metric, can_access_source, can_access_table,
+        )
         from .data import data_roots
 
-        tables, _ = catalog_tables(self.context, section)
-        self.sources = source_summaries(self.context, tables, data_roots(project))
-        self.statuses, _ = metric_statuses(project)
+        raw_tables, _ = catalog_tables(self.context, section)
+        tables = [
+            entry for entry in raw_tables
+            if can_access_table(entry.source, entry.table, self.context, app=self.app)
+        ]
+        self.sources = [
+            summary for summary in source_summaries(self.context, tables, data_roots(project))
+            if can_access_source(summary.ref, self.context, app=self.app)
+        ]
+        statuses, _ = metric_statuses(project)
+        self.statuses = [
+            status for status in statuses
+            if can_access_metric(status, self.context, app=self.app)
+        ]
         self.n_tables = len(tables)
         if self.page == "metrics":
             content = self._metrics_page()

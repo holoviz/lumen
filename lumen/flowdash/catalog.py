@@ -37,10 +37,12 @@ from typing import Any
 
 import sqlglot
 
+from panel_flowdash.auth import Permission
 from sqlglot import exp
 
 from ..sources.base import BaseSQLSource, Source
 from ..transforms.sql import SQLLimit
+from .access import authorized_tables, is_admin, parse_access
 from .project import (
     Problem, Project, ProjectError, ProjectSection, Section, register_section,
 )
@@ -52,8 +54,8 @@ SECTION = "catalog"
 # The key of the editor context the host puts its ``ProjectCatalog`` in.
 CATALOG_KEY = "lumen.catalog"
 
-SOURCE_KEYS = frozenset({"tables"})
-TABLE_KEYS = frozenset({"assistant"})
+SOURCE_KEYS = frozenset({"tables", "access"})
+TABLE_KEYS = frozenset({"assistant", "access"})
 
 EXAMPLE = "`turbines: {tables: {raw_readings: {assistant: false}}}`"
 
@@ -76,9 +78,14 @@ _SHOWN_KEYS = frozenset({"description", "columns", "rows", "docs", "source_name"
 
 @dataclass(frozen=True)
 class Catalog:
-    """The ``catalog:`` section as the app uses it: the tables turned off for the assistant, by source ref."""
+    """
+    The ``catalog:`` section as the app uses it: the tables turned off for the
+    assistant and per-source / per-table ``access:`` permissions, by source ref.
+    """
 
     hidden: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    source_access: Mapping[str, Permission] = field(default_factory=dict)
+    table_access: Mapping[str, Mapping[str, Permission]] = field(default_factory=dict)
 
 
 def load_section(section: Section) -> Catalog:
@@ -94,15 +101,24 @@ def load_section(section: Section) -> Catalog:
         raise ProjectError([section.problem((), f"The catalog maps each source to its tables' settings, e.g. {EXAMPLE}.")])
     problems: list[Problem] = []
     hidden: dict[str, set[str]] = {}
+    source_access: dict[str, Permission] = {}
+    table_access: dict[str, dict[str, Permission]] = {}
     for ref, spec in value.items():
         if spec is None:
             continue
         if not isinstance(spec, Mapping):
-            problems.append(section.problem((ref,), f"Source {ref!r} takes `tables:`, e.g. {EXAMPLE}."))
+            problems.append(section.problem((ref,), f"Source {ref!r} takes `tables:` or `access:`, e.g. {EXAMPLE}."))
             continue
         for key in spec:
             if key not in SOURCE_KEYS:
-                problems.append(section.problem((ref, key), f"Unknown key {key!r} of source {ref!r}; it takes `tables:`.", key=True))
+                problems.append(
+                    section.problem((ref, key), f"Unknown key {key!r} of source {ref!r}; it takes `tables:` or `access:`.", key=True)
+                )
+        if "access" in spec:
+            perm, access_problems = parse_access(spec.get("access"), section, (ref, "access"))
+            problems.extend(access_problems)
+            if not perm.is_empty:
+                source_access[str(ref)] = perm
         tables = spec.get("tables")
         if tables is None:
             continue
@@ -114,20 +130,31 @@ def load_section(section: Section) -> Catalog:
                 continue
             path = (ref, "tables", table)
             if not isinstance(settings, Mapping):
-                problems.append(section.problem(path, f"Table {table!r} takes `assistant: false` to turn it off for the assistant."))
+                problems.append(section.problem(path, f"Table {table!r} takes `assistant: false` or `access:`."))
                 continue
             for key in settings:
                 if key not in TABLE_KEYS:
-                    problems.append(section.problem((*path, key), f"Unknown key {key!r} of table {table!r}; it takes `assistant:`.", key=True))
+                    problems.append(
+                        section.problem((*path, key), f"Unknown key {key!r} of table {table!r}; it takes `assistant:` or `access:`.", key=True)
+                    )
             assistant = settings.get("assistant", True)
             if not isinstance(assistant, bool):
                 problems.append(section.problem((*path, "assistant"), "`assistant` is true or false."))
             elif not assistant:
                 hidden.setdefault(str(ref), set()).add(str(table))
+            if "access" in settings:
+                perm, access_problems = parse_access(settings.get("access"), section, (*path, "access"))
+                problems.extend(access_problems)
+                if not perm.is_empty:
+                    table_access.setdefault(str(ref), {})[str(table)] = perm
     if problems:
         raise ProjectError(problems)
     _warn_unserved(section, value)
-    return Catalog({ref: frozenset(tables) for ref, tables in hidden.items()})
+    return Catalog(
+        hidden={ref: frozenset(tables) for ref, tables in hidden.items()},
+        source_access=source_access,
+        table_access=table_access,
+    )
 
 
 def _warn_unserved(section: Section, value: Mapping[str, Any]) -> None:
@@ -193,6 +220,14 @@ class ProjectCatalog:
     def hidden(self) -> Mapping[str, frozenset[str]]:
         return self.catalog().hidden
 
+    @property
+    def source_access(self) -> Mapping[str, Permission]:
+        return self.catalog().source_access
+
+    @property
+    def table_access(self) -> Mapping[str, Mapping[str, Permission]]:
+        return self.catalog().table_access
+
 
 def raw_section(project: Project) -> dict[str, Any]:
     """The ``catalog:`` section as plain YAML data, as the project file has it now."""
@@ -253,11 +288,9 @@ def hidden_tables(source: Source, context: Mapping[str, Any] | None = None) -> f
 
 
 def assistant_tables(source: Source, context: Mapping[str, Any] | None = None) -> list[str]:
-    """The tables of ``source`` the assistant may use: its listed tables without those turned off."""
-    from .nodes import listed_tables
-
+    """The tables of ``source`` the assistant may use: authorized tables without those turned off."""
     hidden = hidden_tables(source, context)
-    return [table for table in listed_tables(source) if table not in hidden]
+    return [table for table in authorized_tables(source, context) if table not in hidden]
 
 
 def hidden_reads(sql: str, source: Source, hidden: frozenset[str]) -> list[str]:
@@ -649,16 +682,6 @@ def table_detail(
 # Writing the section
 
 
-def _admin(app: Any) -> bool:
-    try:
-        return app is not None and bool(app._still_admin())
-    except Exception as exc:
-        from panel_flowdash.value_text import error_text
-
-        logger.warning("Could not check whether this session is still an admin: %s", error_text(exc))
-        return False
-
-
 def _prune(section: dict[str, Any]) -> dict[str, Any]:
     """``section`` without the tables, sources and ``tables:`` left with no settings."""
     result = {}
@@ -691,7 +714,7 @@ def set_assistant(
     from .nodes import lookup_source
 
     with _FILE_LOCK:
-        if not _admin(app):
+        if not is_admin(app):
             return [Problem(NOT_ADMIN)]
         try:
             current = raw_section(project)

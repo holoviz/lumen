@@ -17,6 +17,10 @@ upload are read by the handlers of ``lumen.flowdash.uploads``.
 
 Importing ``lumen`` does not import this package or panel-flowdash.
 """
+from .access import (
+    attach_access, authorized_metrics, authorized_sources, authorized_tables,
+    can_access_metric, can_access_source, can_access_table,
+)
 from .catalog import (
     CATALOG_KEY, Catalog, ProjectCatalog, assistant_tables, hidden_tables,
 )
@@ -121,8 +125,15 @@ __all__ = [
     "Uploads",
     "ViewNode",
     "assistant_tables",
+    "attach_access",
+    "authorized_metrics",
+    "authorized_sources",
+    "authorized_tables",
     "bind_source",
     "bound_sources",
+    "can_access_metric",
+    "can_access_source",
+    "can_access_table",
     "check_chart",
     "check_columns",
     "check_deckgl",
