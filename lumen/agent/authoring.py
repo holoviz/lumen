@@ -6,6 +6,7 @@ import inspect
 import json
 import math
 
+from collections.abc import Mapping
 from typing import Any, Literal
 
 import sqlglot
@@ -20,9 +21,10 @@ from ..ai.utils import clean_sql, format_error
 from ..flowdash import (
     DECKGL_ID, METRIC_ID, QUERY_TIMEOUT, SQL_ID, TABLE_VIEW_ID, VIEW_ID,
     CheckDiagnostic, check_query, check_sql_config, effective_limit, fetch,
-    pipeline_columns, primed_result, result_sql, row_ceiling,
+    hidden_tables, pipeline_columns, primed_result, result_sql, row_ceiling,
     selection_warnings,
 )
+from ..flowdash.catalog import hidden_reads, turned_off
 from ..flowdash.deckgl import (
     fit_view_state, layer_type, map_summary, position_columns,
 )
@@ -102,16 +104,19 @@ def _marks(spec: dict[str, Any]) -> list[str]:
     return marks
 
 
-async def _test_run(src, sql: str, limit: int) -> tuple[str, str, Any]:
+async def _test_run(src, sql: str, limit: int, context: Mapping[str, Any] | None = None) -> tuple[str, str, Any]:
     """
     Clean, check and run ``sql`` as a SQL node with ``limit`` rows would,
     returning the cleaned query, the statement run (on a result source, the
     expanded statement, run on the root) and its result; any problem is
-    raised as ``ModelRetry`` with the engine's error.
+    raised as ``ModelRetry`` with the engine's error. With ``context``, the
+    editor's, a query reading a table its catalog turns off is refused.
     """
     try:
         sql = clean_sql(str(sql).strip(), src.dialect, prettify=True)
         check_query(sql, src)
+        if context is not None and (read := hidden_reads(sql, src, hidden_tables(src, context))):
+            raise ModelRetry(turned_off(read))
         root, statement = expand(sql, src)
         statement = result_sql(root, statement, limit)
     except (ValueError, sqlglot.errors.SqlglotError) as exc:
@@ -179,7 +184,7 @@ async def _capped_note(ops, src: Any, upstream: str) -> str:
 async def _add_follower(ops, upstreams: list[str], src: Any, name: str, sql: str) -> str:
     """Place a SQL node reading the results of ``upstreams``, joined if several, as ``add_sql`` places one on a source."""
     limit = effective_limit(ops.editor, None)
-    sql, statement, frame = await _test_run(src, sql, limit)
+    sql, statement, frame = await _test_run(src, sql, limit, ops.editor.context)
     with primed_result(src, statement, frame):
         _place(ops, SQL_ID, name, {"sql": sql, "table": name}, f"{upstreams[0]}.result", f"{name}.source")
         try:
@@ -262,7 +267,7 @@ async def add_sql(ctx: RunContext[FlowDashDeps], source: str | list[str], name: 
         return text + _sql_notes(ops, name)
     _, src = resolve_source(ctx.deps, source)
     limit = effective_limit(ops.editor, None)
-    sql, statement, frame = await _test_run(src, sql, limit)
+    sql, statement, frame = await _test_run(src, sql, limit, ops.editor.context)
     port, src, placed = source_output(ctx.deps, source)
     try:
         with primed_result(src, statement, frame):
@@ -311,7 +316,7 @@ async def _change_sql(ctx: RunContext[FlowDashDeps], source: str | list[str], na
     before, wired = _graph.config_of(ops, name), _graph.feeding_all(ops, f"{name}.source")
     rows = before.get("limit")
     limit = effective_limit(ops.editor, rows if isinstance(rows, int) else None)
-    sql, statement, frame = await _test_run(src, sql, limit)
+    sql, statement, frame = await _test_run(src, sql, limit, ops.editor.context)
     if upstream is None:
         port, src, placed_source = source_output(ctx.deps, source)
         ports = [port]

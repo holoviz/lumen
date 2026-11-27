@@ -27,9 +27,10 @@ from ..data.stats import get_stats_store
 from ..data.utils import slug_to_table_name
 from ..flowdash import (
     AGGREGATE_ID, DATA_ID, FILTER_ID, METRIC_ID, QUERY_TIMEOUT, SELECT_ID,
-    SORT_ID, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID, bound_sources, check_query,
-    listed_tables, lookup_source,
+    SORT_ID, SOURCE_ID, SQL_ID, TABLE_ID, VIEW_ID, assistant_tables,
+    bound_sources, check_query, hidden_tables, listed_tables, lookup_source,
 )
+from ..flowdash.catalog import hidden_reads, turned_off
 from ..flowdash.metrics import Metric
 from ..flowdash.nodes import effective_limit
 from ..flowdash.results import expand
@@ -58,7 +59,8 @@ METRIC_TEXT_CHARS = 160
 METRIC_FIELD_CHARS = 80
 METRIC_NAMES_CHARS = 600
 
-_METASETS: weakref.WeakKeyDictionary[Source, Metaset] = weakref.WeakKeyDictionary()
+# The metaset of each source, with the tables it covers.
+_METASETS: weakref.WeakKeyDictionary[Source, tuple[tuple[str, ...], Metaset]] = weakref.WeakKeyDictionary()
 
 
 def _sources_by_name(deps: FlowDashDeps) -> dict[str, tuple[str | None, Source | None]]:
@@ -166,12 +168,25 @@ def allow_host_sources(ops) -> None:
     ops.allow_source = allow_source
 
 
-async def metaset(source: Source) -> Metaset:
-    """The catalog and column statistics of every table of ``source``, computed once per source."""
-    if source not in _METASETS:
-        slugs = [f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}" for table in listed_tables(source)]
-        _METASETS[source] = await get_metaset([source], slugs, stats_timeout=STATS_TIMEOUT)
-    return _METASETS[source]
+async def metaset(source: Source, tables: list[str] | None = None) -> Metaset:
+    """
+    The catalog and column statistics of ``tables`` of ``source``, every
+    listed table by default, computed once per source and set of tables.
+    """
+    tables_key = tuple(listed_tables(source) if tables is None else tables)
+    cached = _METASETS.get(source)
+    if cached is None or cached[0] != tables_key:
+        slugs = [f"{source.name}{SOURCE_TABLE_SEPARATOR}{table}" for table in tables_key]
+        prev = cached[1] if cached is not None else None
+        _METASETS[source] = (tables_key, await get_metaset([source], slugs, prev=prev, stats_timeout=STATS_TIMEOUT))
+    return _METASETS[source][1]
+
+
+def _turned_off(deps: FlowDashDeps, source: Source, table: str, name: str) -> str | None:
+    """Why the assistant may not use ``table`` of ``source``, as the app's catalog turns it off, or None if it may."""
+    off = {t.lower(): t for t in hidden_tables(source, deps.ops.editor.context)}
+    match = off.get(table.strip().strip('"').lower())
+    return turned_off([match], name) if match is not None else None
 
 
 async def note_tables(source: Source, meta: Metaset, slugs: list[str]):
@@ -437,13 +452,14 @@ async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None, 
     found = _sources_by_name(ctx.deps)
     if source is None and len(found) > 1:
         lines = [
-            f"- {name} ({getattr(value, 'dialect', None) or 'no'} SQL): {', '.join(listed_tables(value)) if value else 'not resolved'}"
+            f"- {name} ({getattr(value, 'dialect', None) or 'no'} SQL): "
+            f"{', '.join(assistant_tables(value, ops.editor.context)) if value else 'not resolved'}"
             for name, (_, value) in found.items()
         ]
         return text + f"{len(found)} sources; pass one as source for its column stats:\n" + "\n".join(lines)
     name, src = resolve_source(ctx.deps, source)
-    tables = listed_tables(src)
-    meta = await metaset(src)
+    tables = assistant_tables(src, ops.editor.context)
+    meta = await metaset(src, tables)
     await note_tables(src, meta, meta.get_top_tables(SCHEMA_TABLES_SHOWN))
     others = ", ".join(n for n in found if n != name)
     text += f"{len(tables)} table(s) in source {name!r} ({src.dialect} SQL"
@@ -451,7 +467,11 @@ async def list_tables(ctx: RunContext[FlowDashDeps], source: str | None = None, 
     listing = meta.compact_context(
         n=SCHEMA_TABLES_SHOWN, n_others=PROMPT_OTHER_TABLES, include_lineage=False, max_tokens=SCHEMA_MAX_TOKENS,
     )
-    return text + listing.replace(DEGRADED_NOTE, DESCRIBE_NOTE)
+    text += listing.replace(DEGRADED_NOTE, DESCRIBE_NOTE)
+    if off := len(listed_tables(src)) - len(tables):
+        text += (f"\n{off} more table{'s are' if off > 1 else ' is'} turned off for the assistant in the app's "
+                 f"catalog; an admin can turn {'them' if off > 1 else 'it'} on.")
+    return text
 
 
 async def describe_table(
@@ -464,11 +484,14 @@ async def describe_table(
         source: Source name; defaults to the one with the table.
         columns: Only these columns.
     """
-    _, src = resolve_source(ctx.deps, source, table)
-    meta = await metaset(src)
+    name, src = resolve_source(ctx.deps, source, table)
+    if (refusal := _turned_off(ctx.deps, src, table, name)) is not None:
+        return refusal
+    tables = assistant_tables(src, ctx.deps.ops.editor.context)
+    meta = await metaset(src, tables)
     slug = f"{src.name}{SOURCE_TABLE_SEPARATOR}{table.strip()}"
     if slug not in meta.catalog:
-        raise ModelRetry(f"No table {table!r}. Tables: {', '.join(listed_tables(src))}.")
+        raise ModelRetry(f"No table {table!r}. Tables: {', '.join(tables)}.")
     await meta.ensure_stats([slug], timeout=STATS_TIMEOUT)
     await note_tables(src, meta, [slug])
     wanted = {c.strip().strip('"').lower() for c in columns} if columns else None
@@ -486,9 +509,12 @@ async def distinct_values(
         like: Only values containing this text, ignoring case.
         source: Source name; defaults to the one with the table.
     """
-    _, src = resolve_source(ctx.deps, source, table)
+    name, src = resolve_source(ctx.deps, source, table)
+    if (refusal := _turned_off(ctx.deps, src, table, name)) is not None:
+        return refusal
     return await execute_distinct_values(
-        table, column, like, sources=_sources(src), metaset=await metaset(src), timeout=QUERY_TIMEOUT,
+        table, column, like, sources=_sources(src), metaset=await metaset(src, assistant_tables(src, ctx.deps.ops.editor.context)),
+        timeout=QUERY_TIMEOUT,
     )
 
 
@@ -503,6 +529,8 @@ async def run_sql(ctx: RunContext[FlowDashDeps], sql: str, source: str | None = 
     try:
         cleaned = clean_sql(sql.strip(), src.dialect)
         check_query(cleaned, src)
+        if read := hidden_reads(cleaned, src, hidden_tables(src, ctx.deps.ops.editor.context)):
+            return turned_off(read)
         root, statement = expand(cleaned, src)
     except (ValueError, sqlglot.errors.SqlglotError) as exc:
         return f"SQL parse/clean error: {format_error(exc)}"

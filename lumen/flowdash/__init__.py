@@ -10,9 +10,16 @@ gives the editor in its context under ``SOURCES_KEY`` (``"lumen.sources"``),
 by ref: ``lumen serve --flowdash`` passes the served data, and a ``flowdash
 serve`` project sets ``editor_options = {"context": {"lumen.sources": {...}}}``
 in its ``__init__.py``. Without sources, source nodes say how to provide them.
+The tables of those sources an admin turned off for the assistant, in the
+project file's ``catalog:`` section, are read from ``CATALOG_KEY``
+(``"lumen.catalog"``), see ``lumen.flowdash.catalog``. Data files people
+upload are read by the handlers of ``lumen.flowdash.uploads``.
 
 Importing ``lumen`` does not import this package or panel-flowdash.
 """
+from .catalog import (
+    CATALOG_KEY, Catalog, ProjectCatalog, assistant_tables, hidden_tables,
+)
 from .checks import (
     PROBE_TIMEOUT, CheckDiagnostic, check_chart, check_columns,
     check_filter_config, check_query, check_source_config, check_sql_config,
@@ -42,6 +49,10 @@ from .transforms import (
     AGGREGATE_ID, DERIVE_ID, SELECT_ID, SORT_ID, TRANSFORM_COMPONENTS,
     AggregateNode, DeriveNode, SelectNode, SortNode, transformed_pipeline,
 )
+from .uploads import (
+    ENTRY_POINT_GROUP, UPLOADS_KEY, UploadFormat, Uploads,
+    register_upload_handler, upload_formats,
+)
 
 COMPONENTS.update(TRANSFORM_COMPONENTS)
 COMPONENTS[TABLE_VIEW_ID] = TableViewNode
@@ -56,10 +67,12 @@ __flowdash_components__ = COMPONENTS
 
 __all__ = [
     "AGGREGATE_ID",
+    "CATALOG_KEY",
     "COMPONENTS",
     "DATA_ID",
     "DECKGL_ID",
     "DERIVE_ID",
+    "ENTRY_POINT_GROUP",
     "FILTER_ID",
     "FILTER_OPTIONS",
     "METRICS_KEY",
@@ -80,8 +93,10 @@ __all__ = [
     "SQL_ID",
     "TABLE_ID",
     "TABLE_VIEW_ID",
+    "UPLOADS_KEY",
     "VIEW_ID",
     "AggregateNode",
+    "Catalog",
     "CheckDiagnostic",
     "DataNode",
     "DeckGLNode",
@@ -92,13 +107,17 @@ __all__ = [
     "LumenViewNode",
     "MetricNode",
     "ParameterNode",
+    "ProjectCatalog",
     "SQLNode",
     "SelectNode",
     "SortNode",
     "SourceNode",
     "TableNode",
     "TableViewNode",
+    "UploadFormat",
+    "Uploads",
     "ViewNode",
+    "assistant_tables",
     "bind_source",
     "bound_sources",
     "check_chart",
@@ -124,6 +143,7 @@ __all__ = [
     "global_condition",
     "global_conditions",
     "globally_filtered",
+    "hidden_tables",
     "host_metrics",
     "host_sources",
     "listed_tables",
@@ -135,6 +155,7 @@ __all__ = [
     "primed_result",
     "probe_query",
     "python_value",
+    "register_upload_handler",
     "register_view",
     "result_sql",
     "row_ceiling",
@@ -145,4 +166,5 @@ __all__ = [
     "table_pipeline",
     "transformed_pipeline",
     "unbind_source",
+    "upload_formats",
 ]
