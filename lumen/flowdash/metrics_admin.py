@@ -1,29 +1,31 @@
 """
-The Metrics section of panel-flowdash's admin view and its setup wizard
-step: the agreed definitions of the app's key numbers, which dashboards
-and the assistant use instead of writing their own SQL.
+The metrics' view and the setup wizard's step: the agreed definitions of
+the app's key numbers, which dashboards and the assistant use instead of
+writing their own SQL. The Data section shows the view, and so does
+panel-flowdash's admin view as its Metrics section where there are no
+sidebar sections.
 
 It edits the project file's ``metrics:`` section (see
-``lumen.flowdash.metrics``). The table lists each metric; its editor has a
-form for the name, description, source and table and the rest of the
-definition as YAML, checked by the same loader the app reads the file
-with, every problem shown at its field. The preview runs the metric on its
-source, read-only, capped at ``PREVIEW_ROWS`` rows and ``PREVIEW_TIMEOUT``
-seconds. Saving and deleting check again that the caller is an admin and
-write the section with ``Project.set``, refusing an invalid definition and
-a metric another admin changed since the editor opened.
+``lumen.flowdash.metrics``) through ``lumen.flowdash.metrics_edit``. The
+table lists each metric; its editor has a form for the name, description,
+source and table and the rest of the definition as YAML, checked by the
+same loader the app reads the file with, every problem shown at its field.
+The preview runs the metric on its source, read-only, capped at
+``PREVIEW_ROWS`` rows and ``PREVIEW_TIMEOUT`` seconds. Saving and deleting
+check again that the caller is an admin and write the section with
+``Project.set``, refusing an invalid definition and a metric another admin
+changed since the editor opened. Someone who is not an admin sees the
+metrics and their definitions read-only.
 """
 from __future__ import annotations
 
 import copy
-import dataclasses
 import io
 import logging
 import math
 import typing as t
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
 from pathlib import Path
 
 import panel as pn
@@ -38,28 +40,29 @@ from panel_flowdash.admin.kit import (
 )
 from panel_flowdash.admin.wizard import WizardStep
 from panel_flowdash.project import (
-    _FILE_LOCK, Problem, Project, ProjectError, Section, _parse,
+    Problem, Project, ProjectError, _parse,
 )
-from panel_flowdash.value_text import error_text, redact_secrets
+from panel_flowdash.value_text import error_text
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from ruamel.yaml.nodes import MappingNode, SequenceNode
-from ruamel.yaml.scalarstring import LiteralScalarString
 
-from ..sources.base import BaseSQLSource
-from .contracts import METRIC_ID
-from .metrics import (
-    _NAME, SECTION, Metric, MetricSet, Query, _Reader, aggregate, bind_sql,
-    check_metrics, coerce_dimension_values, prepare, table_sql,
+from .catalog_admin import _USED_CSS, used_html
+from .data import (
+    CHECKS, DashboardRef, MetricStatus, metric_statuses, metric_usage,
+    visible_dashboards,
+)
+from .metrics import SECTION, metrics_page
+from .metrics_edit import (
+    NAME_KEY, NOT_ADMIN_PREVIEW, PREVIEW_ROWS, PREVIEW_TIMEOUT, UNSET,
+    PreviewResult, check_metric, delete_metric, is_admin, literal_blocks,
+    masked, metric_problems, preview_metric, raw_section, replace_metric,
+    save_metric,
 )
 
 logger = logging.getLogger(__name__)
 
 HELP = "Numbers defined here are the agreed definitions; the assistant uses them instead of writing its own SQL."
-
-# The rows a preview query returns at most, and how long it may run.
-PREVIEW_ROWS = 10
-PREVIEW_TIMEOUT = 5
 
 # The longest YAML the editor reads, and how deeply its values may nest.
 YAML_LIMIT = 20_000
@@ -68,13 +71,6 @@ TOO_DEEP = f"The YAML nests deeper than {YAML_DEPTH} levels; a metric needs a fe
 
 # The keys of a metric the form edits; the YAML field holds the others.
 FORM_KEYS = ("description", "source", "table")
-# The pseudo key of a metric's name, for problems with the name itself.
-NAME_KEY = "name"
-
-NOT_ADMIN = "Only admins can change metrics, so this was not saved."
-NOT_ADMIN_PREVIEW = "Only admins can preview metrics."
-
-_UNSET = object()
 
 _MENU_SX = {
     "minWidth": 0,
@@ -87,6 +83,7 @@ _MENU_SX = {
 
 _ROW_CSS = """
 .k .metric { cursor: pointer; min-width: 0; }
+.k .mono-name { font-family: "Roboto Mono", ui-monospace, monospace; font-size: 0.875rem; }
 .k .fields { display: flex; flex-wrap: wrap; gap: 2px 0; }
 .k a { color: var(--mui-palette-primary-text, var(--mui-palette-primary-main)); text-decoration: none; }
 """
@@ -125,196 +122,6 @@ _OVERLINE_SX = {
 
 
 # ---------------------------------------------------------------------------
-# Reading, checking and writing the section
-
-
-def raw_section(project: Project) -> dict[str, t.Any]:
-    """The ``metrics:`` section as plain YAML data, as the project file has it now."""
-    path = Path(project.path).resolve() if project.path else None
-    if path is not None and path.is_file():
-        with _FILE_LOCK:
-            try:
-                text = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError) as exc:
-                raise ProjectError([Problem(f"Cannot read the project file: {error_text(exc)}", str(path))]) from None
-        data, _ = _parse(text, project.path)
-    else:
-        data = project.data
-    value = data.get(SECTION)
-    return copy.deepcopy(value) if isinstance(value, dict) else {}
-
-
-def _replaced(current: Mapping[str, t.Any], original: str | None, name: str, spec: t.Any) -> dict[str, t.Any]:
-    """``current`` with ``original`` replaced by ``name``, in its place, or ``name`` added at the end."""
-    result: dict[str, t.Any] = {}
-    placed = False
-    for key, value in current.items():
-        if key == original:
-            result[name] = spec
-            placed = True
-        elif key != name:
-            result[key] = value
-    if not placed:
-        result[name] = spec
-    return result
-
-
-def _problem(name: str, keys: Sequence[str], message: str) -> Problem:
-    return Problem(message, section=SECTION, keys=(name, *keys))
-
-
-def _masked(problems: Sequence[Problem]) -> list[Problem]:
-    """``problems`` with any credentials an engine's error quotes masked, to show an admin."""
-    return [dataclasses.replace(p, message=redact_secrets(p.message)) for p in problems]
-
-
-def load_metrics(project: Project, section: Mapping[str, t.Any]) -> tuple[MetricSet, list[Problem]]:
-    """
-    ``section`` read as the app reads the ``metrics:`` section of
-    ``project``, and checked against the project's sources when its context
-    has them; a metric over a source the app does not serve is a problem
-    here, not a warning, since saving it would leave it out.
-    """
-    from .nodes import SOURCES_KEY
-
-    candidate = Project(project.path, {**project.data, SECTION: dict(section)}, {}, project.context)
-    try:
-        metrics = _Reader(Section(SECTION, dict(section), candidate)).read()
-    except ProjectError as exc:
-        return MetricSet(), list(exc.problems)
-    if SOURCES_KEY not in project.context:
-        return metrics, []
-    try:
-        kept, warnings = check_metrics(metrics, project.context)
-    except ProjectError as exc:
-        return metrics, list(exc.problems)
-    return kept, warnings
-
-
-def check_metric(
-    project: Project, name: str, spec: t.Any, original: str | None = None,
-    current: Mapping[str, t.Any] | None = None,
-) -> list[Problem]:
-    """
-    Why the ``metrics:`` section with ``spec`` written as metric ``name``
-    (in place of ``original``) would be refused, by the field each problem
-    concerns; none when it would be saved. ``current`` is the section as
-    the file has it now, read when not given.
-    """
-    if not isinstance(name, str) or not _NAME.fullmatch(name):
-        return [_problem(str(name), (NAME_KEY,), "A metric's name is letters, digits and underscores, "
-                         "starting with a letter, e.g. capacity_mw.")]
-    if not isinstance(spec, dict):
-        return [_problem(name, (), "A metric is a mapping of its settings.")]
-    current = raw_section(project) if current is None else current
-    if name != original and name in current:
-        return [_problem(name, (NAME_KEY,), f"A metric named {name!r} exists already.")]
-    return _masked(load_metrics(project, _replaced(current, original, name, spec))[1])
-
-
-def _admin(app: t.Any) -> bool:
-    try:
-        return app is not None and bool(app._still_admin())
-    except Exception as exc:
-        logger.warning("Could not check whether this session is still an admin: %s", error_text(exc))
-        return False
-
-
-def _who(app: t.Any) -> str:
-    return getattr(getattr(app, "_identity", None), "user", None) or "someone"
-
-
-def _write(project: Project, section: dict[str, t.Any]) -> list[Problem]:
-    try:
-        project.set(SECTION, section)
-    except ProjectError as exc:
-        return _masked(exc.problems)
-    except OSError as exc:
-        return [Problem(f"Could not write the project file: {error_text(exc)}")]
-    return []
-
-
-def save_metric(
-    project: Project, name: str, spec: dict[str, t.Any], *, app: t.Any, original: str | None = None,
-    base: t.Any = _UNSET,
-) -> list[Problem]:
-    """
-    Write ``spec`` as metric ``name`` of the project file, in place of
-    ``original`` when it renames or edits one, keeping every other metric as
-    the file has it now. ``base`` is the definition the editor opened, so
-    a metric another admin changed or deleted since is not overwritten.
-    Only an admin (``app._still_admin()``) may save. Returns the problems
-    that stopped it; none when it was written.
-    """
-    with _FILE_LOCK:
-        if not _admin(app):
-            return [Problem(NOT_ADMIN)]
-        try:
-            current = raw_section(project)
-        except ProjectError as exc:
-            return _masked(exc.problems)
-        if original is not None and base is not _UNSET:
-            if original not in current:
-                return [_problem(name, (), f"Metric {original!r} was deleted since you opened it; "
-                                 "save it as a new metric to keep it.")]
-            if current[original] != base:
-                return [_problem(name, (), f"Metric {original!r} was changed since you opened it. "
-                                 "Close the editor and open it again to see the change.")]
-        problems = check_metric(project, name, spec, original, current)
-        if problems:
-            return problems
-        problems = _write(project, _replaced(current, original, name, spec))
-    if not problems:
-        logger.info("Admin: %s saved metric %r.", _who(app), name)
-        from .nodes import metrics_changed
-
-        metrics_changed()
-    return problems
-
-
-def delete_metric(project: Project, name: str, *, app: t.Any, base: t.Any = _UNSET) -> list[Problem]:
-    """Delete metric ``name`` from the project file; only an admin may. Returns the problems that stopped it."""
-    with _FILE_LOCK:
-        if not _admin(app):
-            return [Problem(NOT_ADMIN.replace("saved", "deleted"))]
-        try:
-            current = raw_section(project)
-        except ProjectError as exc:
-            return _masked(exc.problems)
-        if name not in current:
-            return [_problem(name, (), f"Metric {name!r} is not in the project file any more.")]
-        if base is not _UNSET and current[name] != base:
-            return [_problem(name, (), f"Metric {name!r} was changed since you opened it; look again before "
-                             "deleting it.")]
-        rest = {key: value for key, value in current.items() if key != name}
-        problems = _write(project, rest)
-    if not problems:
-        logger.info("Admin: %s deleted metric %r.", _who(app), name)
-        from .nodes import metrics_changed
-
-        metrics_changed()
-    return problems
-
-
-@dataclass(frozen=True)
-class DashboardRef:
-    dashboard_id: str
-    title: str
-
-
-def metric_usage(dashboards: Sequence[t.Any]) -> dict[str, list[DashboardRef]]:
-    """The dashboards whose Lumen Metric nodes read each metric, by metric name."""
-    usage: dict[str, list[DashboardRef]] = {}
-    for model in dashboards:
-        names = {
-            (item.config or {}).get("metric") for item in model.items if item.component_id == METRIC_ID
-        }
-        for name in sorted(n for n in names if isinstance(n, str) and n):
-            usage.setdefault(name, []).append(DashboardRef(model.dashboard_id, model.title))
-    return usage
-
-
-# ---------------------------------------------------------------------------
 # Splitting a definition into the form and the YAML
 
 
@@ -322,7 +129,7 @@ def split_spec(spec: Mapping[str, t.Any]) -> tuple[dict[str, t.Any], str]:
     """The form's values of a metric's definition, and the rest of it as YAML text."""
     form = {key: spec.get(key) for key in FORM_KEYS}
     rest = {key: value for key, value in spec.items() if key not in FORM_KEYS}
-    return form, (_yaml_text(_literal(rest)) if rest else "")
+    return form, (_yaml_text(literal_blocks(rest)) if rest else "")
 
 
 def _yaml_text(value: Mapping[str, t.Any]) -> str:
@@ -415,124 +222,8 @@ def _set_text(widget: t.Any, text: str) -> None:
         widget.param.update(value=text, value_input=text)
 
 
-def _literal(value: t.Any) -> t.Any:
-    if isinstance(value, dict):
-        return {key: _literal(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_literal(item) for item in value]
-    if isinstance(value, str) and "\n" in value.strip():
-        return LiteralScalarString(value if value.endswith("\n") else value + "\n")
-    return value
-
-
 # ---------------------------------------------------------------------------
 # The preview
-
-
-@dataclass
-class PreviewResult:
-    """One query of a preview: what it asks, its SQL and its rows, or why it failed."""
-
-    label: str
-    sql: str = ""
-    columns: list[str] = field(default_factory=list)
-    rows: list[list[t.Any]] = field(default_factory=list)
-    error: str | None = None
-
-
-def _safe(exc: BaseException) -> str:
-    text = error_text(exc).strip()
-    return text.splitlines()[0] if text else type(exc).__name__
-
-
-def _run(source: BaseSQLSource, result: PreviewResult, sql: str, limit: int, timeout: float) -> None:
-    """Run ``sql`` read-only on ``source`` with ``limit`` rows at most, keeping the statement run in ``result``."""
-    from .checks import check_query
-    from .nodes import execute, result_sql
-
-    check_query(sql, source)
-    result.sql = result_sql(source, sql, limit)
-    frame = execute(source, result.sql, timeout).head(limit)
-    result.columns = [str(c) for c in frame.columns]
-    result.rows = frame.astype(object).where(frame.notna(), None).values.tolist()
-
-
-def preview_queries(metric: Metric, dimension: str | None = None) -> list[tuple[str, Query]]:
-    """
-    What the preview of a structured metric runs: every measure with no
-    dimension, and every measure by ``dimension`` (its first one by
-    default) at its coarsest grain, largest first.
-    """
-    measures = list(metric.measures)
-    queries = [("All rows", Query(measures))]
-    dimension = dimension if dimension in metric.dimensions else next(iter(metric.dimensions), None)
-    if dimension is not None:
-        spec = metric.dimensions[dimension]
-        grain = spec.grains[0] if spec.time and spec.grains else None
-        order = [dimension] if spec.time else [f"-{measures[0]}"]
-        queries.append((f"By {dimension}", Query(measures, [dimension], grain=grain, order_by=order)))
-    return queries
-
-
-def preview_metric(
-    project: Project, name: str, spec: t.Any, dimension: str | None = None, *,
-    limit: int = PREVIEW_ROWS, timeout: float = PREVIEW_TIMEOUT,
-) -> tuple[list[Problem], list[PreviewResult]]:
-    """
-    Run metric ``name`` defined as ``spec`` on its source as the app would,
-    read-only, with at most ``limit`` rows in ``timeout`` seconds: a
-    structured metric's measures alone and by one dimension, a SQL metric's
-    query with its defaults. Returns the problems with the definition, or
-    the results; an error a query hits is kept in its result, with any
-    credentials masked.
-    """
-    from .nodes import lookup_source
-
-    if not isinstance(name, str) or not _NAME.fullmatch(name):
-        name = "preview"
-    if not isinstance(spec, dict):
-        return [_problem(name, (), "A metric is a mapping of its settings.")], []
-    candidate = Project(project.path, {SECTION: {name: spec}}, {}, project.context)
-    try:
-        metric = _Reader(Section(SECTION, {name: spec}, candidate)).read()[name]
-    except ProjectError as exc:
-        return _masked(exc.problems), []
-    source = lookup_source(metric.source, project.context)
-    if source is None:
-        from .nodes import host_sources
-
-        refs = ", ".join(sorted(host_sources(project.context))) or "none"
-        return [_problem(name, ("source",), f"The app serves no source {metric.source!r}; its sources are: {refs}.")], []
-    if not isinstance(source, BaseSQLSource):
-        return [_problem(name, ("source",), f"{type(source).__name__} does not run SQL.")], []
-    dialect = None if source.dialect == "any" else source.dialect
-    results = []
-    if metric.form == "sql":
-        result = PreviewResult("The query, with its defaults")
-        try:
-            _run(source, result, bind_sql(metric, metric.values({}), source.dialect), limit, timeout)
-        except Exception as exc:
-            result.error = _safe(exc)
-        return [], [result]
-    try:
-        tables = source.get_tables()
-    except Exception as exc:
-        return [_problem(name, ("source",), f"Could not list the source's tables: {_safe(exc)}")], []
-    if metric.table not in tables:
-        return [_problem(name, ("table",), f"The source {metric.source!r} has no table {metric.table!r}.")], []
-    columns = {str(c): s for c, s in source.get_schema(metric.table).items() if c != "__len__"}
-    for label, query in preview_queries(metric, dimension):
-        result = PreviewResult(label)
-        try:
-            query, values = prepare(metric, query)
-            values = coerce_dimension_values(metric, values, columns)
-            transform = aggregate(metric, query, values, source.dialect)
-            transform.columns = list(columns)
-            _run(source, result, transform.apply(table_sql(metric.table, dialect)), limit, timeout)
-        except Exception as exc:
-            result.error = _safe(exc)
-        results.append(result)
-    return [], results
 
 
 def _number(value: t.Any) -> str:
@@ -597,12 +288,15 @@ class MetricEditor(Viewer):
     The form of one metric: its name, description, source and table, the
     rest of its definition as YAML, the problems at their fields and a
     preview. ``spec`` makes the definition; it is checked with ``check``.
+    Unless ``editable`` its fields only show the definition, and there is
+    no preview, which runs what the fields say.
     """
 
-    def __init__(self, project: Project, **params):
+    def __init__(self, project: Project, editable: bool = True, app: t.Any = None, **params):
         super().__init__(**params)
         self.project = project
-        self._app = current_app()
+        self.editable = editable
+        self._app = app if app is not None else current_app()
         self._name = pmui.TextInput(
             label="Name", placeholder="capacity", sizing_mode="stretch_width", margin=0,
             css_classes=["flowdash-metric-name"],
@@ -660,6 +354,11 @@ class MetricEditor(Viewer):
             styles={"gap": "14px"},
             css_classes=["flowdash-metric-editor"],
         )
+        if not editable:
+            for widget in (self._name, self._description, self._source, self._table, self._yaml):
+                widget.disabled = True
+            for item in self._layout[4:]:
+                item.visible = False
         self.load()
 
     def _context(self) -> Mapping[str, t.Any]:
@@ -803,7 +502,7 @@ class MetricEditor(Viewer):
 
     def preview(self) -> list[PreviewResult]:
         """Run the preview of the form's definition and show it; only for an admin."""
-        if not _admin(self._app):
+        if not is_admin(self._app):
             self._preview.object = f'<div class="k"><span class="error-text">{esc(NOT_ADMIN_PREVIEW)}</span></div>'
             return []
         spec, problems = self.spec()
@@ -839,18 +538,18 @@ class MetricEditor(Viewer):
 # ---------------------------------------------------------------------------
 # The admin section
 
-# Below this width the table shows only a metric, where it is used and its menu.
+# Below this width the table shows only a metric, what it reads, its check, where it is used and its menu.
 _NARROW = 760
 
 _NARROW_CSS = f"""
 @media (max-width: {_NARROW}px) {{
-  :host > div:nth-of-type(2), :host > div:nth-of-type(3), :host > div:nth-of-type(4) {{ display: none !important; }}
+  :host > div:nth-of-type(3), :host > div:nth-of-type(4), :host > div:nth-of-type(5) {{ display: none !important; }}
 }}
 """
 
 
 class _MetricsTable(Table):
-    """The kit's table, dropping the source, measures and dimensions columns at phone width."""
+    """The kit's table, dropping the measures, dimensions and parameters columns at phone width."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -908,17 +607,34 @@ def _focus_after_close(widget: t.Any, guard: t.Any = None):
 
 
 class MetricsSettings(Viewer):
-    """The Metrics section: the table of the project's metrics and a drawer that edits one."""
+    """
+    The metrics: the table of the project's metrics and a drawer that edits
+    one, or only shows it unless ``editable``. ``app`` is the session's
+    app, by default the one whose admin view builds it.
+    """
 
     editable = param.Boolean(default=True)
 
     selected = param.String(default=None, allow_None=True, doc="The metric the drawer edits; None for a new one.")
 
-    def __init__(self, project: Project, editable: bool = True, **params):
+    filter = param.String(default="all", doc="""
+        The chip filtering the table: ``all``, ``problems``, or ``source:<ref>`` for one source.""")
+
+    query = param.String(default="")
+
+    def __init__(
+        self, project: Project, editable: bool = True, app: t.Any = None, show_new: bool = True,
+        on_open: t.Callable[[str], t.Any] | None = None, on_change: t.Callable[[str | None], t.Any] | None = None,
+        **params,
+    ):
         super().__init__(editable=editable, **params)
         self.project = project
-        self._app = current_app()
-        self._base: t.Any = _UNSET
+        self._app = app if app is not None else current_app()
+        # Opens a metric's page when a row is clicked; without it the row opens the editor.
+        self._on_open = on_open
+        # Told the metric saved (by its name) or deleted (None).
+        self._on_change = on_change
+        self._base: t.Any = UNSET
         # The metric whose row menu takes the focus when the drawer or the dialog closes; None for New metric.
         self._return_to: str | None = None
         self._alert = pmui.Alert(
@@ -926,28 +642,38 @@ class MetricsSettings(Viewer):
         )
         self._new = pmui.Button(
             label="New metric", icon="add", variant="contained", margin=0,
-            disabled=not editable, css_classes=["flowdash-metrics-new"],
+            disabled=not editable, visible=editable and show_new, css_classes=["flowdash-metrics-new"],
         )
         self._new.on_click(lambda _event: self.open_metric(None))
-        self._count = caption("", styles={"flex": "1 1 160px", "min-width": "0"})
+        self._banner = pn.Column(margin=0, sizing_mode="stretch_width", visible=False,
+                                 css_classes=["flowdash-metrics-banner"])
+        self._search = pmui.TextInput(placeholder="Search metrics", size="small", width=240, margin=0)
+        self._search.param.watch(lambda event: setattr(self, "query", event.new or ""), "value_input")
+        self._chips: dict[str, pmui.Chip] = {}
+        self._chip_row = pn.Row(margin=0, styles={"gap": "8px", "flex-wrap": "wrap", "align-items": "center"})
+        self._count = caption("", styles={"flex": "1 1 160px", "min-width": "0", "text-align": "right"})
         toolbar = pn.Row(
+            self._search,
+            self._chip_row,
             self._count,
             self._new,
             margin=0,
             sizing_mode="stretch_width",
             styles={
-                "padding": "10px 12px", "align-items": "center", "gap": "12px", "flex-wrap": "wrap",
+                "padding": "10px 12px", "align-items": "center", "gap": "8px", "flex-wrap": "wrap",
                 "border-bottom": "1px solid var(--mui-palette-divider)",
             },
         )
         self._table = _MetricsTable(
             [
-                ("Metric", "2.2fr"),
-                ("Source", "1.1fr"),
+                ("Metric", "2fr"),
+                ("Reads", "1.3fr"),
                 ("Measures", "1.4fr"),
                 ("Dimensions", "1.4fr"),
-                ("Used in", "0.7fr"),
-                ("", "40px"),
+                ("Parameters", "1fr"),
+                ("Check", "1.1fr"),
+                ("Used by", "0.6fr"),
+                *([("", "40px")] if editable else []),
             ],
             toolbar=toolbar,
             footer=caption(
@@ -955,16 +681,20 @@ class MetricsSettings(Viewer):
                 "breaks the dashboards that use it.",
                 margin=(12, 12),
             ),
-            empty="No metrics yet. Define the numbers people ask for most, e.g. installed capacity.",
+            empty=(
+                "No metrics yet. Define the numbers people ask for most, e.g. installed capacity." if editable
+                else "No metrics yet. Admins define them."
+            ),
             css_classes=["flowdash-admin-metrics"],
         )
         self._menus: dict[str, pmui.MenuButton] = {}
-        self._editor = MetricEditor(project)
+        self._editor = MetricEditor(project, editable=editable, app=self._app)
         self._build_drawer()
         self._build_dialog()
         self._focus_guard = _focus_guard()
         self._layout = pn.Column(
             self._alert,
+            self._banner,
             self._table,
             self._drawer,
             self._dialog,
@@ -987,17 +717,11 @@ class MetricsSettings(Viewer):
             return {}
 
     def usage(self) -> dict[str, list[DashboardRef]]:
-        store = getattr(self._app, "store", None)
-        if store is None:
-            return {}
-        try:
-            return metric_usage(store._all_dashboards())
-        except Exception as exc:
-            logger.warning("Could not read the dashboards that use the metrics: %s", error_text(exc))
-            return {}
+        """The dashboards this session may open that use each metric, by metric name."""
+        return metric_usage(visible_dashboards(self._app))
 
     def _show_problems(self, problems: Sequence[Problem]):
-        self._alert.param.update(object="\n\n".join(p.message for p in _masked(problems)), visible=bool(problems))
+        self._alert.param.update(object="\n\n".join(p.message for p in masked(problems)), visible=bool(problems))
 
     def _notify(self, message: str):
         if self._app is not None:
@@ -1006,91 +730,165 @@ class MetricsSettings(Viewer):
     # ------------------------------------------------------------------
     # The table
 
+    def statuses(self) -> list[MetricStatus]:
+        """Each metric of the file as it is now, with whether the app uses it."""
+        statuses, general = metric_statuses(self.project)
+        self._general = general
+        return statuses
+
+    def _passes(self, status: MetricStatus) -> bool:
+        if self.filter == "problems" and status.check == "valid":
+            return False
+        if self.filter.startswith("source:") and status.spec.get("source") != self.filter[7:]:
+            return False
+        measures, dimensions = _fields(status.spec)
+        haystack = " ".join([status.name, status.description, str(status.spec.get("table") or ""),
+                             *measures, *dimensions]).lower()
+        return all(word in haystack for word in self.query.lower().split())
+
+    def _chip(self, key: str) -> pmui.Chip:
+        if key not in self._chips:
+            css = "".join(c if c.isalnum() else "-" for c in key).lower()
+            widget = pmui.Chip(label=key, size="medium", margin=0, sx={"fontSize": "0.875rem"},
+                               css_classes=[f"filter-{css}"])
+            widget.on_click(lambda *_args, key=key: setattr(self, "filter", key))
+            self._chips[key] = widget
+        return self._chips[key]
+
+    @param.depends("filter", "query", watch=True)
     def refresh(self):
-        """Draw the table from the project file."""
+        """Draw the banner, the chips and the table from the project file."""
         self._menus = {}
         self._alert.visible = False
-        section = self.section()
+        statuses = self.statuses()
         usage = self.usage()
-        problems = self.problems(section)
         where = Path(self.project.path).name if self.project.path else "the project file"
-        n = len(section)
+        n = len(statuses)
         self._count.object = f"{n} metric{'' if n == 1 else 's'} in {where}"
-        self._table.set_rows([
-            (name, self._cells(name, spec, usage.get(name, []), problems.get(name, [])))
-            for name, spec in section.items()
-        ])
-        if general := problems.get(None):
-            self._alert.param.update(
-                object="The project file's metrics have problems: " + " ".join(general), visible=True
-            )
+        refs = list(dict.fromkeys(str(s.spec.get("source")) for s in statuses if s.spec.get("source")))
+        failing = [s for s in statuses if s.check != "valid"]
+        counts = {"all": n, "problems": len(failing)}
+        for ref in refs:
+            counts[f"source:{ref}"] = sum(s.spec.get("source") == ref for s in statuses)
+        labels = {"all": "All", **({f"source:{ref}": ref for ref in refs} if len(refs) > 1 else {}),
+                  "problems": "Has problems"}
+        if self.filter not in labels:
+            self.filter = "all"
+            return
+        with pn.io.hold():
+            chips = []
+            for key, label in labels.items():
+                active = key == self.filter
+                if key == "problems" and not counts[key] and not active:
+                    continue
+                widget = self._chip(key)
+                widget.param.update(
+                    label=f"{label} {counts.get(key, 0)}", icon="check" if active else None,
+                    variant="filled" if active else "outlined", color="primary" if active else "default",
+                )
+                chips.append(widget)
+            self._chip_row[:] = chips
+            self._table.set_rows([
+                (status.name, self._cells(status, usage.get(status.name, [])))
+                for status in statuses if self._passes(status)
+            ])
+            self._render_banner(failing, usage)
+            if self._general:
+                self._alert.param.update(
+                    object="The project file's metrics have problems: " + " ".join(self._general), visible=True,
+                )
+
+    def _render_banner(self, failing: Sequence[MetricStatus], usage: Mapping[str, Sequence[DashboardRef]]):
+        """Say which metric cannot run and what that does, for an admin to fix it."""
+        if not failing or not self.editable:
+            self._banner.visible = False
+            return
+        status = failing[0]
+        used = usage.get(status.name, [])
+        where = (
+            f"{', '.join(d.title for d in used[:3])} {'shows' if len(used) == 1 else 'show'} this error where "
+            "it uses the metric, and the" if used else "The"
+        )
+        more = f" {len(failing) - 1} more metric{'s' if len(failing) > 2 else ''} cannot run either." if len(failing) > 1 else ""
+        from .metric_page import problem_banner
+
+        open_it = pmui.Button(
+            label=f"Open {status.name}", variant="text", size="small", margin=0,
+            sx={"textTransform": "none"}, css_classes=["flowdash-metrics-banner-open"],
+        )
+        open_it.on_click(lambda _event, name=status.name: self.open(name))
+        self._banner[:] = [problem_banner(
+            f"{status.name} can't run",
+            f"{status.message} {where} assistant leaves the metric out until it is fixed.{more}", [open_it],
+        )]
+        self._banner.param.update(visible=True, margin=(0, 0, 16, 0))
+
+    def open(self, name: str):
+        """Open metric ``name``: its page, where there is one, else the editor."""
+        if self._on_open is not None:
+            self._on_open(name)
+        else:
+            self.open_metric(name)
 
     def problems(self, section: Mapping[str, t.Any]) -> dict[str | None, list[str]]:
         """
         Why the app does not use each metric of ``section``, e.g. after a hand
         edit of the file, by metric name; None for problems of no one metric.
         """
-        if not section:
-            return {}
-        _, problems = load_metrics(self.project, section)
-        by_metric: dict[str | None, list[str]] = {}
-        for problem in _masked(problems):
-            keys = tuple(problem.keys or ())
-            name = keys[0] if problem.section in (None, SECTION) and keys and keys[0] in section else None
-            by_metric.setdefault(name, []).append(problem.message)
-        return by_metric
+        return metric_problems(self.project, section)
 
-    def _cells(self, name: str, spec: t.Any, used: Sequence[DashboardRef], problems: Sequence[str] = ()) -> list:
-        spec = spec if isinstance(spec, dict) else {}
+    def _cells(self, status: MetricStatus, used: Sequence[DashboardRef]) -> list:
+        name, spec = status.name, status.spec
         measures, dimensions = _fields(spec)
-        description = spec.get("description") if isinstance(spec.get("description"), str) else ""
-        flag = (
-            f'<span class="main error-text small">Not used by the app: {esc(" ".join(problems))}</span>'
-            if problems else ""
-        )
+        parameters = [str(p) for p in spec.get("parameters") or {}] if isinstance(spec.get("parameters"), dict) else []
         title = cell(
-            f'<div class="metric"><span class="main">{esc(name)}</span>'
-            f'<span class="main muted small">{esc(description) or "&nbsp;"}</span>{flag}</div>',
+            f'<div class="metric"><span class="main mono-name">Σ&nbsp; {esc(name)}</span>'
+            f'<span class="main muted small">{esc(status.description) or "&nbsp;"}</span></div>',
             stylesheets=[_ROW_CSS],
         )
-        open_editor = pmui.Clickable(
+        open_it = pmui.Clickable(
             object=title, sizing_mode="stretch_width", margin=0,
-            css_classes=["flowdash-admin-metric-invalid"] if problems else [],
+            css_classes=["flowdash-admin-metric-invalid"] if status.check != "valid" else [],
         )
-        open_editor.on_click(lambda *_args, name=name: self.open_metric(name))
-        where = spec.get("table") if "table" in spec else "SQL query"
-        source = cell(
-            f'<span class="main">{esc(spec.get("source", ""))}</span>'
-            f'<span class="mono">{esc(where or "")}</span>'
+        open_it.on_click(lambda *_args, name=name: self.open(name))
+        table = spec.get("table") if "table" in spec else None
+        missing = status.check == "table"
+        where = (
+            f'<span class="mono{" error-text" if missing else ""}">{esc(table)}</span>' if table
+            else '<span class="mono">SQL query</span>'
         )
-        none = '<span class="muted">None</span>'
+        reads = cell(f'<span class="main mono-name">{esc(spec.get("source", ""))}</span>{where}', stylesheets=[_ROW_CSS])
+        none = '<span class="muted">-</span>'
         fields = lambda names: f'<div class="fields">{"".join(chip(n) for n in names)}</div>' if names else none
-        used_text = (
-            f'<span class="main" title="{esc(", ".join(r.title for r in used))}">{len(used)}</span>'
-            if used else '<span class="main">-</span>'
+        sql_note = '<span class="muted">its query\'s columns</span>'
+        check = (
+            chip(CHECKS["valid"], "success") if status.check == "valid"
+            else f'<span title="{esc(status.message)}">{chip(CHECKS[status.check], "error")}</span>'
         )
-        menu = pmui.MenuButton(
-            items=[
-                {"label": "Edit", "icon": "edit", "action": "edit"},
-                {"label": "Duplicate", "icon": "content_copy", "action": "duplicate",
-                 "disabled": not self.editable},
-                {"label": "Delete", "icon": "delete", "action": "delete", "disabled": not self.editable},
-            ],
-            icon="more_vert", label="", variant="text", color="default", size="small", icon_size="20px",
-            margin=0, sx=_MENU_SX, description=f"More actions for {name}",
-            css_classes=["flowdash-admin-metric-menu"],
-        )
-        menu.on_click(lambda item, name=name: self.run(item.get("action"), name))
-        self._menus[name] = menu
-        sql_note = '<span class="muted">Its query\'s columns</span>'
-        return [
-            open_editor,
-            source,
+        cells = [
+            open_it,
+            reads,
             cell(fields(measures) if "sql" not in spec else sql_note),
             cell(fields(dimensions) if "sql" not in spec else none),
-            cell(used_text),
-            menu,
+            cell(fields(parameters)),
+            cell(check, css_classes=["flowdash-metric-check"]),
+            cell(used_html(used, []), stylesheets=[_USED_CSS]),
         ]
+        if self.editable:
+            menu = pmui.MenuButton(
+                items=[
+                    {"label": "Edit", "icon": "edit", "action": "edit"},
+                    {"label": "Duplicate", "icon": "content_copy", "action": "duplicate"},
+                    {"label": "Delete", "icon": "delete", "action": "delete"},
+                ],
+                icon="more_vert", label="", variant="text", color="default", size="small", icon_size="20px",
+                margin=0, sx=_MENU_SX, description=f"More actions for {name}",
+                css_classes=["flowdash-admin-metric-menu"],
+            )
+            menu.on_click(lambda item, name=name: self.run(item.get("action"), name))
+            self._menus[name] = menu
+            cells.append(menu)
+        return cells
 
     def run(self, action: str | None, name: str):
         """Carry out the row menu's ``action`` on metric ``name``."""
@@ -1112,11 +910,13 @@ class MetricsSettings(Viewer):
         self._drawer_alert = pmui.Alert(
             object="", severity="error", visible=False, sizing_mode="stretch_width", margin=0
         )
-        cancel = pmui.Button(label="Cancel", variant="outlined", color="default", margin=0)
+        cancel = pmui.Button(
+            label="Cancel" if self.editable else "Done", variant="outlined", color="default", margin=0,
+        )
         cancel.on_click(lambda _event: self.close_metric())
         self._save = pmui.Button(
             label="Save", icon="save", variant="contained", margin=0, disabled=not self.editable,
-            css_classes=["flowdash-metric-save"],
+            visible=self.editable, css_classes=["flowdash-metric-save"],
         )
         self._save.on_click(lambda _event: self.save())
         head = pn.Row(
@@ -1168,7 +968,7 @@ class MetricsSettings(Viewer):
             return
         # Closed with Escape, the backdrop or a button: focus goes back to what opened it.
         self.selected = None
-        self._base = _UNSET
+        self._base = UNSET
         if not self._dialog.open:
             self._restore_focus()
 
@@ -1184,10 +984,12 @@ class MetricsSettings(Viewer):
             return
         self.selected = name
         self._return_to = name
-        self._base = copy.deepcopy(section[name]) if name is not None else _UNSET
+        self._base = copy.deepcopy(section[name]) if name is not None else UNSET
         with pn.io.hold():
             self._drawer_alert.visible = False
-            self._drawer_title.object = title or ("New metric" if name is None else f"Edit {name}")
+            self._drawer_title.object = title or (
+                "New metric" if name is None else f"Edit {name}" if self.editable else name
+            )
             self._editor.load(name or "", section[name] if name is not None else spec)
             self._drawer.open = True
 
@@ -1196,7 +998,7 @@ class MetricsSettings(Viewer):
         if self._drawer.open:
             self._drawer.open = False
         self.selected = None
-        self._base = _UNSET
+        self._base = UNSET
 
     def save(self, confirmed: bool = False) -> bool:
         """
@@ -1229,6 +1031,8 @@ class MetricsSettings(Viewer):
         self.refresh()
         self.close_metric()
         self._notify(f"Metric {name} saved.")
+        if self._on_change is not None:
+            self._on_change(name)
         return True
 
     def duplicate(self, name: str):
@@ -1348,6 +1152,8 @@ class MetricsSettings(Viewer):
         self.refresh()
         self._dialog.open = False
         self._notify(f"Metric {name} deleted.")
+        if self._on_change is not None:
+            self._on_change(None)
         return True
 
     def __panel__(self):
@@ -1377,7 +1183,7 @@ class KeyNumbersStep(WizardStep):
         params.setdefault(
             "description",
             f"{HELP} Start with the three to five numbers people ask for most; you can add more "
-            "later in Admin, Metrics.",
+            f"later in {metrics_page()}.",
         )
         params.setdefault("icon", "functions")
         super().__init__(project, **params)
@@ -1409,7 +1215,7 @@ class KeyNumbersStep(WizardStep):
         if problems:
             self.editor.show_problems(problems)
             raise ValueError(" ".join(p.message for p in problems))
-        return {SECTION: _replaced(raw_section(self.project), None, name, spec)}
+        return {SECTION: replace_metric(raw_section(self.project), None, name, spec)}
 
     def summary(self) -> list[str]:
         if self.editor.is_blank():

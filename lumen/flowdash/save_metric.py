@@ -45,7 +45,8 @@ from sqlglot import exp
 from ..sources.base import BaseSQLSource
 from .contracts import DATA_ID, METRIC_ID, SQL_ID
 from .metrics import (
-    METRICS_KEY, SECTION, MetricSet, Query, check_expression, read_metrics,
+    METRICS_KEY, SECTION, MetricSet, Query, check_expression, metrics_page,
+    read_metrics,
 )
 from .project import Project, ProjectError, parse_project
 from .transforms import (
@@ -650,7 +651,7 @@ def project_of(ctx: Any) -> Project | None:
 
 
 class _Admin:
-    """The admin check ``metrics_admin.save_metric`` asks before writing, answered by the node action's context."""
+    """The admin check ``metrics_edit.save_metric`` asks before writing, answered by the node action's context."""
 
     def __init__(self, ctx: Any):
         self._ctx = ctx
@@ -663,7 +664,7 @@ class _Admin:
 def save_metric(ctx: Any, name: str, definition: Mapping[str, Any]) -> None:
     """
     Write the metric ``name`` of ``definition`` to the project file, as the
-    admin Metrics section saves one (``metrics_admin.save_metric``): under
+    Metrics view saves one (``metrics_edit.save_metric``): under
     the project file's lock, keeping every other metric as the file has it
     now, checked against the sources before the file is written atomically,
     and only for someone still admin. Its SQL is written as a block.
@@ -677,13 +678,13 @@ def save_metric(ctx: Any, name: str, definition: Mapping[str, Any]) -> None:
     ProjectError
         With the problems that stopped it, e.g. a taken name or a column the table lacks.
     """
-    from . import metrics_admin
+    from . import metrics_edit
 
     project = project_of(ctx)
     if project is None:
         raise ValueError("The app has no project file to save metrics to.")
-    problems = metrics_admin.save_metric(project, name, metrics_admin._literal(dict(definition)), app=_Admin(ctx))
-    if problems and problems[0].message == metrics_admin.NOT_ADMIN:
+    problems = metrics_edit.save_metric(project, name, metrics_edit.literal_blocks(dict(definition)), app=_Admin(ctx))
+    if problems and problems[0].message == metrics_edit.NOT_ADMIN:
         raise PermissionError("Only an admin of the project may save a metric.")
     if problems:
         raise ProjectError(problems)
@@ -949,7 +950,7 @@ class SaveMetricDialog(Viewer):
         self.close()
         self.ctx.notify("success", (
             f"{self.draft.target} now reads the metric {self.saved}. Undo points it back as before; "
-            f"the metric {self.saved} stays saved in Admin, Metrics."
+            f"the metric {self.saved} stays saved in {metrics_page()}."
         ))
         return name
 

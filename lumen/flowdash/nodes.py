@@ -39,7 +39,9 @@ import threading
 import time
 import weakref
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import (
+    Callable, Iterator, Mapping, Sequence,
+)
 from concurrent.futures import (
     Future, ThreadPoolExecutor, TimeoutError as FutureTimeout,
 )
@@ -95,7 +97,7 @@ from .contracts import (
 from .defaults import vega_lite_default
 from .metrics import (
     METRICS_KEY, Metric, MetricError, MetricPreFilter, Query, aggregate,
-    bind_sql, coerce_dimension_values, prepare, table_sql,
+    bind_sql, coerce_dimension_values, metrics_page, prepare, table_sql,
 )
 from .redact import redact_spec
 from .results import (
@@ -1226,6 +1228,31 @@ def _fetch_preview(pipeline: Pipeline) -> None:
         _PREVIEW_FAILED[pipeline] = message[0] if message else type(exc).__name__
 
 
+def in_background(work: Callable[[], Any], done: Callable[[], Any]) -> None:
+    """
+    Run ``work`` on a worker thread and then ``done`` on the session's
+    event loop, e.g. to read a table's metadata for a view; both at once
+    outside a served session.
+    """
+    if not _in_served_session():
+        work()
+        done()
+        return
+    doc = pn.state.curdoc
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    def finished(future):
+        if not future.cancelled():
+            if (exc := future.exception()) is not None:
+                logger.warning("Could not read the data: %s", type(exc).__name__)
+            _schedule(done, doc, loop)
+
+    _preview_pool().submit(work).add_done_callback(finished)
+
+
 def _schedule(callback: Any, doc: Any, loop: asyncio.AbstractEventLoop | None) -> None:
     """Run ``callback`` on the event loop that asked for the preview, if it is still there."""
     if doc is not None:
@@ -2173,7 +2200,8 @@ def check_metric_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
     metrics = host_metrics()
     metric = metrics.get(name)
     if metric is None:
-        return CheckDiagnostic(missing_metric(name, metrics), field="metric")
+        failure = getattr(metrics, "failures", {}).get(name)
+        return CheckDiagnostic(failure.message if failure is not None else missing_metric(name, metrics), field="metric")
     try:
         prepare(metric, metric_query(config, inputs.get("parameters")))
     except MetricError as exc:
@@ -2261,7 +2289,8 @@ class MetricNode(PipelineNode):
         metrics = host_metrics(self._context)
         metric = metrics.get(self.metric)
         if metric is None:
-            raise ValueError(missing_metric(self.metric, metrics))
+            failure = getattr(metrics, "failures", {}).get(self.metric)
+            raise ValueError(failure.message if failure is not None else missing_metric(self.metric, metrics))
         source = lookup_source(metric.source, self._context)
         if source is None:
             raise ValueError(missing_source(metric.source, host_sources(self._context)))
@@ -2291,11 +2320,16 @@ class MetricNode(PipelineNode):
         """
         if not self.metric or not reads_as_data(self.editor, via):
             return None
-        metric = host_metrics(self._context).get(self.metric)
+        metrics = host_metrics(self._context)
+        metric = metrics.get(self.metric)
+        if metric is None and (failure := getattr(metrics, "failures", {}).get(self.metric)) is not None:
+            # The project defines it, but it does not run: say why, as the Metrics page does.
+            return {"label": f"Metric: {self.metric}", "kind": "missing", "icon": "error_outline",
+                    "detail": f"{failure.message} An admin can fix its definition in {metrics_page()}."}
         if metric is None:
             return {"label": f"Missing metric: {self.metric}", "kind": "missing", "icon": "error_outline",
                     "detail": f"The project no longer defines the {self.metric} metric, so this number cannot "
-                              "be computed. Pick another metric or define it again in Admin, Metrics."}
+                              f"be computed. Pick another metric or define it again in {metrics_page()}."}
         from .save_metric import (
             aggregating_step, derived_label, describe_reading,
         )

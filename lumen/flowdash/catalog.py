@@ -10,17 +10,23 @@ each source the app serves, by the source's ref and table.
 
 A table turned off is left out of what the assistant lists and describes,
 and the SQL it writes with Lumen's tools may not read it; dashboards, their
-nodes and the component palette still read it. The admin view's Catalog
-section (``lumen.flowdash.catalog_admin``) lists the sources and their
-tables and writes this section.
+nodes and the component palette still read it.
 
 The host puts a ``ProjectCatalog`` (or a ``Catalog``) in the editor's
 context under ``CATALOG_KEY``; ``hidden_tables`` reads it from there.
+
+This module also reads what the app's sources say of their tables
+(``catalog_tables``, ``table_info``, ``table_detail``) and writes the
+section (``set_assistant``), for any view that shows them: the Data
+section (``lumen.flowdash.data_section``), or the admin view's Catalog on a
+panel-flowdash without sidebar sections (``lumen.flowdash.catalog_admin``).
 """
 from __future__ import annotations
 
 import copy
+import datetime as dt
 import logging
+import math
 import re
 import threading
 
@@ -33,7 +39,8 @@ import sqlglot
 
 from sqlglot import exp
 
-from ..sources.base import Source
+from ..sources.base import BaseSQLSource, Source
+from ..transforms.sql import SQLLimit
 from .project import (
     Problem, Project, ProjectError, ProjectSection, Section, register_section,
 )
@@ -52,6 +59,17 @@ EXAMPLE = "`turbines: {tables: {raw_readings: {assistant: false}}}`"
 
 # The table a legacy name of a served file reads, see ``nodes.add_legacy_tables``.
 _LEGACY_TARGET = re.compile(r'FROM "((?:[^"]|"")+)"')
+
+# The rows ``table_detail`` reads of a table, and how long reading them may take.
+SAMPLE_ROWS = 10
+SAMPLE_TIMEOUT = 5
+# The values of a column ``table_detail`` lists before saying how many more there are.
+VALUES_SHOWN = 6
+
+NOT_ADMIN = "Only admins can change what the assistant uses, so this was not saved."
+
+# Metadata ``table_detail`` reads into its own fields, or that only Lumen uses.
+_SHOWN_KEYS = frozenset({"description", "columns", "rows", "docs", "source_name", "data_type"})
 
 
 @dataclass(frozen=True)
@@ -274,6 +292,314 @@ def turned_off(tables: list[str] | frozenset[str], ref: str | None = None) -> st
             f"{'them' if plural else 'it'}; tell the user an admin can turn {'them' if plural else 'it'} on.")
 
 
+# ---------------------------------------------------------------------------
+# The sources' tables
+
+
+@dataclass
+class CatalogTable:
+    """A table of a source the app serves: its source's ref, whether the assistant may use it, and its upload."""
+
+    ref: str
+    table: str
+    source: Source
+    assistant: bool = True
+    upload: Any = None
+    """The ``lumen.flowdash.uploads.Upload`` the source was read from, if it is an upload."""
+
+
+def catalog_tables(
+    context: Mapping[str, Any], section: Mapping[str, Any] | None = None,
+) -> tuple[list[CatalogTable], dict[str, str]]:
+    """
+    Every table of every source in ``context``, uploads included, in the
+    order the sources are served, with whether ``section`` (the raw
+    ``catalog:`` data, read from the project file in ``context`` when not
+    given) leaves it to the assistant; and why the tables of a source that
+    failed to list them are missing, by its ref. Lists the tables, which
+    may query a source; run it off the event loop for a slow one.
+    """
+    from .nodes import host_sources, listed_tables
+    from .uploads import UPLOADS_KEY
+
+    if section is None:
+        project = getattr(context.get(CATALOG_KEY), "project", None)
+        section = raw_section(project) if project is not None else {}
+    uploads = context.get(UPLOADS_KEY)
+    hidden = hidden_by_source(section, context)
+    tables, errors = [], {}
+    for ref, source in host_sources(context).items():
+        try:
+            names = listed_tables(source)
+        except Exception as exc:
+            errors[ref] = safe_error(exc)
+            continue
+        off = hidden.get(id(source), set())
+        upload = uploads.get(ref) if uploads is not None else None
+        tables.extend(CatalogTable(ref, table, source, table not in off, upload) for table in names)
+    return tables, errors
+
+
+@dataclass
+class TableInfo:
+    """What a list shows of a table: its rows, columns and description, or why they could not be read."""
+
+    rows: int | None = None
+    columns: list[str] | None = None
+    description: str = ""
+    error: str | None = None
+    loading: bool = False
+
+
+@dataclass
+class ColumnInfo:
+    name: str
+    type: str = ""
+    values: str = ""
+    description: str = ""
+
+
+@dataclass
+class TableDetail:
+    """All that is known of a table: its columns with their types and values, its metadata and its first rows."""
+
+    rows: int | None = None
+    description: str = ""
+    columns: list[ColumnInfo] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+    sample: Any = None
+    error: str | None = None
+    sample_error: str | None = None
+
+
+def safe_error(exc: BaseException) -> str:
+    """The first line of ``exc``'s message, with any credentials masked, to show."""
+    from panel_flowdash.value_text import error_text, redact_secrets
+
+    lines = redact_secrets(error_text(exc)).strip().splitlines()
+    return lines[0] if lines else type(exc).__name__
+
+
+def _count(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number == value else None
+
+
+def _text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def known_info(source: Source, table: str) -> TableInfo | None:
+    """What is known of ``table`` without a query: the schema the source stored or the frame it holds."""
+    from .nodes import _table_metadata
+
+    try:
+        rows, columns = _table_metadata(source, table, source._get_schema_cache() or {})
+    except Exception:
+        return None
+    if columns is None:
+        return None
+    described = (source.descriptions or {}).get(table) or (source.metadata or {}).get(table) or {}
+    return TableInfo(rows=rows, columns=columns, description=_text(described.get("description")))
+
+
+def table_info(source: Source, table: str) -> TableInfo:
+    """The rows, columns and description of ``table`` from the source's metadata, which may query it."""
+    try:
+        metadata = source.get_metadata(table)
+    except Exception as exc:
+        return TableInfo(error=safe_error(exc))
+    columns = metadata.get("columns")
+    return TableInfo(
+        rows=_count(metadata.get("rows")),
+        columns=[str(c) for c in columns] if isinstance(columns, Mapping) else None,
+        description=_text(metadata.get("description")),
+    )
+
+
+def plain_text(value: Any) -> str:
+    """``value``, a cell or a bound of a column, as text: empty for a missing value."""
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return ""
+    if isinstance(value, float):
+        return f"{value:.6g}"
+    if isinstance(value, (dt.datetime, dt.date)):
+        return value.isoformat(sep=" ") if isinstance(value, dt.datetime) else value.isoformat()
+    return str(value)
+
+
+def _values(spec: Mapping[str, Any]) -> str:
+    if isinstance(enum := spec.get("enum"), list) and enum:
+        shown = ", ".join(plain_text(v) for v in enum[:VALUES_SHOWN] if v is not None)
+        return shown + (f" +{len(enum) - VALUES_SHOWN} more" if len(enum) > VALUES_SHOWN else "")
+    low, high = spec.get("inclusiveMinimum"), spec.get("inclusiveMaximum")
+    if low is not None or high is not None:
+        return f"{plain_text(low)} to {plain_text(high)}"
+    return ""
+
+
+def _type(spec: Mapping[str, Any], metadata: Mapping[str, Any]) -> str:
+    kind = spec.get("type") or metadata.get("data_type") or ""
+    kind = "/".join(map(str, kind)) if isinstance(kind, list) else str(kind)
+    if not (fmt := spec.get("format")):
+        return kind
+    return str(fmt) if kind in ("string", "") else f"{kind} ({fmt})"
+
+
+def sample_sql(source: BaseSQLSource, table: str, rows: int = SAMPLE_ROWS) -> str:
+    """The statement reading the first ``rows`` rows of ``table``."""
+    return SQLLimit(limit=rows, write=source.dialect).apply(source.get_sql_expr(source.normalize_table(table)))
+
+
+def table_detail(source: Source, table: str, timeout: float = SAMPLE_TIMEOUT) -> TableDetail:
+    """
+    The columns of ``table`` with their types, value ranges and
+    descriptions, its other metadata and, for a SQL source, its first rows.
+    Reading the schema counts the rows and the value ranges, so this queries
+    the table; run it off the event loop.
+    """
+    from .nodes import execute
+
+    detail = TableDetail()
+    try:
+        metadata = source.get_metadata(table)
+    except Exception as exc:
+        metadata = {}
+        detail.error = safe_error(exc)
+    try:
+        schema = source.get_schema(table)
+    except Exception as exc:
+        schema = {}
+        detail.error = detail.error or safe_error(exc)
+    columns_meta = metadata.get("columns") if isinstance(metadata.get("columns"), Mapping) else {}
+    detail.rows = _count(schema.get("__len__")) if isinstance(schema, Mapping) else None
+    if detail.rows is None:
+        detail.rows = _count(metadata.get("rows"))
+    detail.description = _text(metadata.get("description"))
+    names = [name for name in (schema or {}) if name != "__len__"] or list(columns_meta)
+    for name in names:
+        spec = schema.get(name) if isinstance(schema.get(name), Mapping) else {}
+        column = columns_meta.get(name)
+        column = column if isinstance(column, Mapping) else {"description": column} if isinstance(column, str) else {}
+        detail.columns.append(ColumnInfo(
+            str(name), _type(spec, column), _values(spec), _text(column.get("description")),
+        ))
+    detail.metadata = {
+        str(key): value for key, value in metadata.items()
+        if key not in _SHOWN_KEYS and value not in (None, "", [], {})
+    }
+    if isinstance(source, BaseSQLSource):
+        try:
+            detail.sample = execute(source, sample_sql(source, table), timeout)
+        except Exception as exc:
+            detail.sample_error = safe_error(exc)
+    return detail
+
+
+# ---------------------------------------------------------------------------
+# Writing the section
+
+
+def _admin(app: Any) -> bool:
+    try:
+        return app is not None and bool(app._still_admin())
+    except Exception as exc:
+        from panel_flowdash.value_text import error_text
+
+        logger.warning("Could not check whether this session is still an admin: %s", error_text(exc))
+        return False
+
+
+def _prune(section: dict[str, Any]) -> dict[str, Any]:
+    """``section`` without the tables, sources and ``tables:`` left with no settings."""
+    result = {}
+    for ref, spec in section.items():
+        if not isinstance(spec, dict):
+            result[ref] = spec
+            continue
+        tables = spec.get("tables")
+        if isinstance(tables, dict):
+            kept = {table: settings for table, settings in tables.items() if settings}
+            spec = {**spec, "tables": kept} if kept else {k: v for k, v in spec.items() if k != "tables"}
+        if spec:
+            result[ref] = spec
+    return result
+
+
+def set_assistant(
+    project: Project, ref: str, table: str, on: bool, *, app: Any,
+) -> list[Problem]:
+    """
+    Turn ``table`` of the source ``ref`` on or off for the assistant,
+    writing the project file's ``catalog:`` section and keeping the rest of
+    it as the file has it now. Turning it on also clears the setting under
+    an alias of the source, e.g. one written by hand. Only an admin
+    (``app._still_admin()``) may. Returns the problems that stopped it.
+    """
+    from panel_flowdash.project import _FILE_LOCK
+    from panel_flowdash.value_text import error_text
+
+    from .nodes import lookup_source
+
+    with _FILE_LOCK:
+        if not _admin(app):
+            return [Problem(NOT_ADMIN)]
+        try:
+            current = raw_section(project)
+        except ProjectError as exc:
+            return list(exc.problems)
+        except OSError as exc:
+            return [Problem(f"Could not read the project file: {error_text(exc)}")]
+        section = copy.deepcopy(current)
+        context = project.context or {}
+        source = lookup_source(ref, context)
+        if on:
+            for name, spec in section.items():
+                if name != ref and (source is None or lookup_source(str(name), context) is not source):
+                    continue
+                settings = ((spec or {}).get("tables") or {}).get(table) if isinstance(spec, dict) else None
+                if isinstance(settings, dict):
+                    settings.pop("assistant", None)
+        else:
+            spec = section.get(ref)
+            spec = section[ref] = spec if isinstance(spec, dict) else {}
+            tables = spec.get("tables")
+            tables = spec["tables"] = tables if isinstance(tables, dict) else {}
+            settings = tables.get(table)
+            settings = tables[table] = settings if isinstance(settings, dict) else {}
+            settings["assistant"] = False
+        try:
+            project.set(SECTION, _prune(section))
+        except ProjectError as exc:
+            return list(exc.problems)
+        except OSError as exc:
+            return [Problem(f"Could not write the project file: {error_text(exc)}")]
+    who = getattr(getattr(app, "_identity", None), "user", None) or "someone"
+    logger.info("Admin: %s turned %s table %r of %r for the assistant.", who, "on" if on else "off", table, ref)
+    return []
+
+
+def hidden_by_source(section: Mapping[str, Any], context: Mapping[str, Any]) -> dict[int, set[str]]:
+    """The tables ``section``, the raw ``catalog:`` data, turns off, by the ``id`` of the source each ref names."""
+    from .nodes import lookup_source
+
+    hidden: dict[int, set[str]] = {}
+    for ref, spec in section.items():
+        source = lookup_source(str(ref), context)
+        tables = spec.get("tables") if isinstance(spec, Mapping) else None
+        if source is None or not isinstance(tables, Mapping):
+            continue
+        for table, settings in tables.items():
+            if isinstance(settings, Mapping) and settings.get("assistant") is False:
+                hidden.setdefault(id(source), set()).add(str(table))
+    return hidden
+
+
 def _settings_view(project: Project, editable: bool) -> Any:
     from .catalog_admin import catalog_settings
 
@@ -281,13 +607,13 @@ def _settings_view(project: Project, editable: bool) -> Any:
 
 
 def _register() -> None:
-    from .metrics import _LumenSection
+    from .metrics import _DataSection
 
     admin = {
         key: value for key, value in {"settings_view": _settings_view, "group": "Data"}.items()
         if key in getattr(ProjectSection, "__dataclass_fields__", {})
     }
-    register_section((_LumenSection if admin else ProjectSection)(
+    register_section((_DataSection if admin else ProjectSection)(
         SECTION, load_section, title="Catalog", icon="storage",
         description="The sources the app serves and their tables. Turn a table off to keep the assistant from "
         "using it; dashboards still read it.",

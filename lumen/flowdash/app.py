@@ -25,7 +25,12 @@ from panel_flowdash.project import _parse
 from ..sources.base import Source
 from ..sources.data import PROVIDED_SOURCE_NAME
 from .catalog import CATALOG_KEY, ProjectCatalog
-from .metrics import METRICS_KEY, ProjectMetrics, serve_lumen
+from .data_section import (
+    SECTION_ID as DATA_SECTION_ID, data_section, redirect_moved_admin_pages,
+)
+from .metrics import (
+    METRICS_KEY, ProjectMetrics, serve_data, serve_lumen,
+)
 from .nodes import SOURCE_ALIASES_KEY, SOURCES_KEY
 from .project import (
     PROJECT_FILE, Project, ProjectError, load_project,
@@ -417,8 +422,12 @@ def build_routes(
     # The admin view edits this project, so what it saves is what the app reads.
     context[METRICS_KEY] = ProjectMetrics(project)
     context[CATALOG_KEY] = ProjectCatalog(project)
+    # The Data section reads them from the project it edits.
+    project.context.setdefault(METRICS_KEY, context[METRICS_KEY])
+    project.context.setdefault(CATALOG_KEY, context[CATALOG_KEY])
     uploads.project = project
     editor_options["context"] = context
+    data = _with_data_section(params)
     routes = FlowDashApp.build_routes(
         project_dir=str(Path.cwd()),
         registry={},
@@ -431,13 +440,33 @@ def build_routes(
         project=project,
         **params,
     )
-    return {path: _lumen_session(factory, uploads) for path, factory in routes.items()}
+    return {path: _lumen_session(factory, uploads, data) for path, factory in routes.items()}
 
 
-def _lumen_session(factory: Any, uploads: Uploads | None = None) -> Any:
+def _with_data_section(params: dict[str, Any]) -> bool:
+    """
+    Add the Data section to the sidebar sections in ``params``, the
+    ``FlowDashApp`` parameters, where panel-flowdash has sidebar sections
+    and the app shows them; returns whether it did. A section of the host's
+    with the same id takes its place.
+    """
+    section = data_section()
+    if section is None or params.get("nav_variant", FlowDashApp.param.nav_variant.default) != "rail":
+        return False
+    given = params.get("sections")
+    given = list((given() if callable(given) else given) or [])
+    if any(getattr(other, "id", None) == DATA_SECTION_ID for other in given):
+        return False
+    params["sections"] = [section, *given]
+    return True
+
+
+def _lumen_session(factory: Any, uploads: Uploads | None = None, data: bool = False) -> Any:
     """
     ``factory`` marking each session it serves as a Lumen app's, which shows
-    the Lumen admin sections, and giving it the app's uploads.
+    the Lumen admin sections, and with ``data`` as one with the Data
+    section, which leaves the catalog and the metrics out of the admin
+    view; and giving it the app's uploads.
     """
     if not callable(factory):
         return factory
@@ -446,7 +475,11 @@ def _lumen_session(factory: Any, uploads: Uploads | None = None) -> Any:
         import panel as pn
 
         serve_lumen(pn.state.curdoc)
+        if data:
+            serve_data(pn.state.curdoc)
         app = factory(*args, **kwargs)
+        if data:
+            redirect_moved_admin_pages(app)
         if uploads is not None:
             uploads.attach(app)
         return app

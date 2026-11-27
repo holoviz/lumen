@@ -35,6 +35,10 @@ def stop_servers():
 
 
 def _serve(page, tmp_path, monkeypatch):
+    import sys
+
+    # The admin view's Catalog, as on a panel-flowdash without sidebar sections; the Data section has its own test.
+    monkeypatch.setitem(sys.modules, "panel_flowdash.sidebar", None)
     monkeypatch.chdir(tmp_path)
     (tmp_path / "turbines.csv").write_text(
         "p_name,t_state,p_year,p_cap,t_cap\n" + "".join(f"{n},{s},{y},{p},{c}\n" for n, s, y, p, c in ROWS)
@@ -57,7 +61,7 @@ def test_an_admin_browses_the_catalog_and_turns_a_table_off(page, tmp_path, monk
     expect(page.locator(".flowdash-admin-row-local--readings")).to_contain_text("2 columns")
 
     page.locator(".flowdash-admin-row-local--readings .flowdash-catalog-assistant input").click()
-    expect(page.locator(".filter-off")).to_contain_text("Off 1")
+    expect(page.locator(".filter-off")).to_contain_text("Assistant off 1")
     assert load_project(tmp_path / PROJECT_FILE).raw("catalog") == {
         "local": {"tables": {"readings": {"assistant": False}}}
     }

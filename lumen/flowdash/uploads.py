@@ -10,8 +10,9 @@ writes the project file's ``uploads:`` section:
       formats: [csv, xlsx]     # left out: every registered file type
       max_mb: 100
 
-People who may upload then get an Add data button in the dashboard bar,
-and admins one in the Catalog section. An uploaded file becomes a source
+People who may upload then get an Add data button in the dashboard bar
+and in the Data section's tables (or the admin view's Catalog, for admins,
+where there is no Data section). An uploaded file becomes a source
 of its own, named by the table name the uploader picks, that every
 session's dashboards, component list and assistant can use, and that the
 catalog lists with who uploaded it and when; the catalog's assistant
@@ -20,10 +21,10 @@ switch applies to its tables like to any other.
 The files are kept beside the project file, in an ``uploads`` folder: each
 upload in a folder named by its stable id, and ``manifest.json`` listing
 them with who uploaded each, when, and its checksum. They are read again
-when the app starts. Deleting an upload moves its folder to
-``uploads/.trash``, where it stays for ``TRASH_DAYS`` days, so a backup
-taken shortly before stays consistent and ``Uploads.recover`` can bring
-it back.
+when the app starts. Deleting an upload, which its uploader or an admin
+may, moves its folder to ``uploads/.trash``, where it stays for
+``TRASH_DAYS`` days, so a backup taken shortly before stays consistent and
+``Uploads.recover`` can bring it back; only an admin can recover one.
 
 A file is read by the upload handler registered for its extension. A
 handler has the signature of Lumen AI's ``upload_handlers``:
@@ -52,22 +53,20 @@ import logging
 import os
 import re
 import shutil
+import tempfile
 import threading
 import typing as t
 import uuid
 import weakref
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from functools import partial
 from importlib.util import find_spec
 from pathlib import Path
 
 import panel as pn
-import panel_material_ui as pmui
 import param
-
-from panel.viewable import Viewer
 
 from ..sources.base import Source
 from .project import (
@@ -279,7 +278,7 @@ def _settings_groups():
             (
                 Setting(
                     "enabled", "Let people upload data",
-                    "An Add data button in the dashboard bar. Admins can upload in the Catalog either way.",
+                    "An Add data button in the dashboard bar and with the app's tables. Admins can always add data.",
                     kind="switch", default=False,
                 ),
                 Setting(
@@ -348,7 +347,7 @@ def _register() -> None:
     register_section((_LumenSection if admin else ProjectSection)(
         SECTION, load_section, title="Uploads", icon="upload_file",
         description="Let people add data files to the app. An upload is a source everyone who can open the app "
-        "can use in dashboards and, unless turned off in the Catalog, the assistant.",
+        "can use in dashboards and, unless its table is turned off for it, the assistant.",
         **admin,
     ))
 
@@ -365,7 +364,6 @@ class Upload:
     filename: str
     format: str
     tables: list[str]
-    uploaded_by: str
     uploaded_at: str
     size: int
     sheet: str | None = None
@@ -373,6 +371,11 @@ class Upload:
     """Stable for the upload's life, and the name of its folder."""
     sha256: str = ""
     """The checksum of the uploaded file."""
+    uploaded_by: str = ""
+    """
+    Who uploaded it, by the app's identity name; empty for a record kept
+    from before this was recorded, which only an admin may then delete.
+    """
 
     @property
     def when(self) -> dt.datetime | None:
@@ -380,6 +383,159 @@ class Upload:
             return dt.datetime.fromisoformat(self.uploaded_at)
         except ValueError:
             return None
+
+
+@dataclass
+class Connection:
+    """
+    A source an admin connected in the app: a database, a database file or
+    a data file, by its location. The manifest never holds its credentials:
+    a location with a password or token keeps only its masked form, and the
+    whole location goes in ``secret``, encrypted as panel-flowdash stores a
+    model provider's key (see ``panel_flowdash.secret_store``); a password
+    written as a ``${VARIABLE}`` reference is kept as written and read from
+    the server's environment when it connects.
+    """
+
+    ref: str
+    location: str
+    """What ``lumen serve`` would be given for it, a path, a URL or a connection string, credentials masked."""
+    added_by: str
+    added_at: str
+    id: str = ""
+    secret: dict[str, str] | None = None
+    """The location with its credentials, encrypted, when it has any written out."""
+
+    @property
+    def when(self) -> dt.datetime | None:
+        try:
+            return dt.datetime.fromisoformat(self.added_at)
+        except ValueError:
+            return None
+
+    @property
+    def shown(self) -> str:
+        """The location to show: masked, with any ``${VARIABLE}`` reference as written."""
+        from panel_flowdash.value_text import redact_secrets
+
+        return self.location if _REFERENCE.search(self.location) else redact_secrets(self.location)
+
+
+# A reference to an environment variable in a location, e.g. the password of postgresql://ana:${PG_PASSWORD}@host/db.
+_REFERENCE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?::-[^}]*)?\}")
+
+
+def stored_location(location: str) -> tuple[str, dict[str, str] | None]:
+    """
+    What the manifest keeps of ``location``: the location itself when it
+    holds no credentials, or only ``${VARIABLE}`` references to them; else
+    its masked form and the whole location encrypted. Raises
+    ``UploadError`` when it holds credentials and nothing here can encrypt
+    them.
+    """
+    from panel_flowdash.secret_store import (
+        INSTALL_HINT, SecretError, encrypt_secret, encryption_available,
+    )
+    from panel_flowdash.value_text import redact_secrets
+
+    masked = redact_secrets(location)
+    if masked == location:
+        return location, None
+    # With each reference standing where a secret would, only a secret written out is left to mask.
+    referenced = _REFERENCE.sub("***", location)
+    if redact_secrets(referenced) == referenced:
+        return location, None
+    if not encryption_available():
+        raise UploadError(
+            f"{INSTALL_HINT} Or write the password as a reference to an environment variable the server "
+            "has, e.g. postgresql://user:${PG_PASSWORD}@host/db."
+        )
+    try:
+        return masked, encrypt_secret(location)
+    except SecretError as exc:
+        raise UploadError(f"Could not store its credentials: {exc}") from None
+
+
+def resolved_location(connection: Connection) -> str:
+    """
+    The location ``connection`` connects to, with its credentials:
+    decrypted, and its references read from the environment. Raises
+    ``UploadError`` saying why they cannot be read, never what they are.
+    """
+    from panel_flowdash.project import expand_env
+    from panel_flowdash.secret_store import SecretError, resolve_secret
+
+    try:
+        location = resolve_secret(connection.secret) if connection.secret else connection.location
+        return expand_env(location)
+    except (SecretError, ValueError) as exc:
+        raise UploadError(f"Its credentials can't be read, so it is not connected. {exc}") from None
+
+
+@dataclass
+class TablePreview:
+    """A table of a file or source not added yet: its columns with their types and first values."""
+
+    table: str
+    columns: list[tuple[str, str, str]] = field(default_factory=list)
+    """Each column's name, type and first few values, as text."""
+
+
+@dataclass
+class Preview:
+    """What adding a file or a source would add: the source's ref and its tables, the first ones previewed."""
+
+    ref: str
+    tables: list[str]
+    previews: list[TablePreview] = field(default_factory=list)
+
+
+# The rows a preview reads of a table, and the tables it previews at most.
+PREVIEW_ROWS = 4
+PREVIEW_TABLES = 3
+
+
+def _kind(dtype: t.Any) -> str:
+    """A column's pandas ``dtype`` as the catalog names types."""
+    from pandas.api import types
+
+    if types.is_bool_dtype(dtype):
+        return "boolean"
+    if types.is_integer_dtype(dtype):
+        return "integer"
+    if types.is_float_dtype(dtype) or types.is_numeric_dtype(dtype):
+        return "number"
+    if types.is_datetime64_any_dtype(dtype):
+        return "datetime"
+    return "string"
+
+
+def table_preview(source: Source, table: str, rows: int = PREVIEW_ROWS) -> TablePreview:
+    """The columns of ``table`` with their types and first ``rows`` values; reads them, so run it off the event loop."""
+    import datetime as _dt
+
+    import pandas as pd
+
+    from .catalog import plain_text, sample_sql
+    from .nodes import execute
+
+    if hasattr(source, "get_sql_expr"):
+        frame = execute(source, sample_sql(source, table, rows))
+    else:
+        frame = source.get(table).head(rows)
+    preview = TablePreview(table)
+    for column in frame.columns:
+        values = frame[column]
+        kind = _kind(values.dtype)
+        items = values.tolist()
+        if kind == "string" and len(values.dropna()) and values.map(lambda v: isinstance(v, _dt.date)).all():
+            kind = "date"
+        elif kind == "datetime" and all(pd.isna(v) or v == v.normalize() for v in items):
+            # Days read from a spreadsheet arrive as midnights.
+            kind, items = "date", [None if pd.isna(v) else v.date() for v in items]
+        shown = ", ".join(plain_text(v) for v in items if plain_text(v))
+        preview.columns.append((str(column), kind, shown))
+    return preview
 
 
 @dataclass
@@ -392,11 +548,23 @@ def _identity_name(app: t.Any) -> str:
     return getattr(getattr(app, "_identity", None), "user", None) or "someone"
 
 
+def _has_identity(app: t.Any) -> bool:
+    """Whether app's session carries a real identity, as opposed to the "someone" every identity-less session shares."""
+    return bool(getattr(getattr(app, "_identity", None), "user", None))
+
+
 def _is_admin(app: t.Any) -> bool:
     try:
         return app is not None and bool(app._still_admin())
     except Exception:
         return False
+
+
+def _is_uploader(app: t.Any, upload: Upload) -> bool:
+    """Whether app's session is the one who made upload; a record kept before uploaders were recorded is no one's,
+    and neither is one made or checked by a session without a real identity, since every such session would
+    otherwise match under the shared "someone" placeholder."""
+    return bool(upload.uploaded_by) and _has_identity(app) and _identity_name(app) == upload.uploaded_by
 
 
 class Uploads:
@@ -419,6 +587,9 @@ class Uploads:
         self.project = project
         self.trash_days = trash_days
         self._uploads: dict[str, Upload] = {}
+        self._connections: dict[str, Connection] = {}
+        # Why each connection that is listed but not served could not connect, e.g. its credentials are unreadable.
+        self._broken: dict[str, str] = {}
         self._lock = threading.RLock()
         self._editors: weakref.WeakKeyDictionary[t.Any, _Session] = weakref.WeakKeyDictionary()
 
@@ -450,6 +621,10 @@ class Uploads:
         """Whether ``app``'s session may upload: an admin always, anyone else as ``offered`` says."""
         return _is_admin(app) or self.offered(app)
 
+    def may_delete(self, upload: Upload | None, app: t.Any) -> bool:
+        """Whether ``app``'s session may delete ``upload``: an admin always, or whoever uploaded it, themself."""
+        return upload is not None and (_is_admin(app) or _is_uploader(app, upload))
+
     # ------------------------------------------------------------------
     # The uploads
 
@@ -459,6 +634,18 @@ class Uploads:
 
     def get(self, ref: str) -> Upload | None:
         return self._uploads.get(ref)
+
+    def connections(self) -> list[Connection]:
+        with self._lock:
+            return list(self._connections.values())
+
+    def connection(self, ref: str) -> Connection | None:
+        """The source an admin connected as ``ref``, if it is one."""
+        return self._connections.get(ref)
+
+    def connection_problem(self, ref: str) -> str | None:
+        """Why the connected source ``ref`` is listed but not served, e.g. its credentials can't be read."""
+        return self._broken.get(ref)
 
     def _manifest_path(self) -> Path:
         return self.directory / MANIFEST
@@ -471,16 +658,19 @@ class Uploads:
         self.directory.mkdir(parents=True, exist_ok=True)
         path = self._manifest_path()
         temporary = path.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps({"uploads": [asdict(u) for u in self._uploads.values()]}, indent=2),
-                             encoding="utf-8")
+        manifest = {
+            "uploads": [asdict(u) for u in self._uploads.values()],
+            "sources": [asdict(c) for c in self._connections.values()],
+        }
+        temporary.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         os.replace(temporary, path)
 
-    def _read(self, upload: Upload, content: bytes | None = None) -> Source:
+    def _read(self, upload: Upload, content: bytes | None = None, directory: Path | None = None) -> Source:
         """The source ``upload``'s handler reads from its stored file, named by its ref."""
         upload_format = self.formats.get(upload.format)
         if upload_format is None:
             raise UploadError(f"No upload handler reads .{upload.format} files.")
-        directory = self.folder(upload)
+        directory = self.folder(upload) if directory is None else directory
         path = directory / upload.filename
         if content is None:
             content = path.read_bytes()
@@ -518,10 +708,34 @@ class Uploads:
         if not path.is_file():
             return
         try:
-            entries = json.loads(path.read_text(encoding="utf-8")).get("uploads") or []
+            manifest = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             logger.warning("Not reading the uploads in %s: %s", path, type(exc).__name__)
             return
+        entries = manifest.get("uploads") or []
+        for entry in manifest.get("sources") or []:
+            try:
+                connection = Connection(**entry)
+            except TypeError:
+                logger.warning("Skipping a source %s lists that it cannot read.", path)
+                continue
+            if connection.ref in self.sources:
+                logger.warning("Not restoring the source %r: a served source has its name.", connection.ref)
+                continue
+            # A source that cannot connect stays listed, so an admin can enter its credentials again or remove it.
+            self._connections[connection.ref] = connection
+            try:
+                source = self._open(resolved_location(connection), connection.ref)
+            except UploadError as exc:
+                self._broken[connection.ref] = str(exc)
+                logger.warning("Not connecting the source %r: %s", connection.ref, exc)
+                continue
+            except Exception as exc:
+                # The error may quote the connection's credentials, which are not logged.
+                self._broken[connection.ref] = f"Could not connect to it ({type(exc).__name__})."
+                logger.warning("Could not connect the source %r: %s", connection.ref, type(exc).__name__)
+                continue
+            self.sources[connection.ref] = source
         for entry in entries:
             try:
                 upload = Upload(**entry)
@@ -540,11 +754,12 @@ class Uploads:
             self._uploads[upload.ref] = upload
             self.sources[upload.ref] = source
 
-    def _ref(self, name: str) -> str:
+    def _ref(self, name: str, free: t.Collection[str] = ()) -> str:
+        """A ref for ``name`` no source, upload or connection has, except those in ``free``."""
         base = _slug(name) or "upload"
         if base[0].isdigit():
             base = f"t_{base}"
-        taken = {*self.sources, *self._uploads}
+        taken = {*self.sources, *self._uploads, *self._connections} - set(free)
         ref, n = base, 1
         while ref in taken:
             n += 1
@@ -564,16 +779,58 @@ class Uploads:
             return f"{filename} is larger than the {self.settings().max_mb} MB uploads may have."
         return None
 
-    def add(
+    def preview(
         self, content: bytes, filename: str, name: str | None = None, *, app: t.Any = None,
         sheet: str | None = None,
+    ) -> Preview:
+        """
+        What ``add`` would add for the same arguments: the ref, the tables
+        and the first rows of the first tables, read by the handler of the
+        file's type in a scratch folder that is removed again. Raises
+        ``UploadError`` like ``add``. Reads the file, so call it off the
+        event loop.
+        """
+        from .nodes import listed_tables
+
+        filename = Path(str(filename).replace("\\", "/")).name
+        if (refusal := self.refusal(filename, len(content), app)) is not None:
+            raise UploadError(refusal)
+        ref = self._ref(name or Path(filename).stem)
+        upload = Upload(
+            ref=ref, filename=filename, format=extension_of(filename), tables=[], uploaded_by=_identity_name(app),
+            uploaded_at="", size=len(content), sheet=sheet or None,
+        )
+        with tempfile.TemporaryDirectory(prefix="lumen-preview-") as scratch:
+            directory = Path(scratch)
+            (directory / filename).write_bytes(content)
+            try:
+                source = self._read(upload, content, directory)
+                tables = listed_tables(source)
+                previews = [table_preview(source, table) for table in tables[:PREVIEW_TABLES]]
+            except UploadError:
+                raise
+            except Exception as exc:
+                from panel_flowdash.value_text import (
+                    error_text, redact_secrets,
+                )
+
+                raise UploadError(f"{filename} could not be read: {redact_secrets(error_text(exc))}") from None
+        if not tables:
+            raise UploadError("The file holds no table.")
+        return Preview(ref, tables, previews)
+
+    def add(
+        self, content: bytes, filename: str, name: str | None = None, *, app: t.Any = None,
+        sheet: str | None = None, assistant: bool = True,
     ) -> Upload:
         """
         Keep ``content``, uploaded as ``filename``, as a source named
         ``name`` (by default its file name), read by the handler of its
-        type, and give it to every session. Raises ``UploadError`` with why
-        it was refused or could not be read. Reads the file, so call it off
-        the event loop.
+        type, and give it to every session; with ``assistant`` off its
+        tables are turned off for the assistant, which the person uploading
+        may do for their own upload. Raises ``UploadError`` with why it was
+        refused or could not be read. Reads the file, so call it off the
+        event loop.
         """
         filename = Path(str(filename).replace("\\", "/")).name
         if (refusal := self.refusal(filename, len(content), app)) is not None:
@@ -608,18 +865,155 @@ class Uploads:
             sessions = list(self._editors.items())
         logger.info("Upload: %s added %s (%d bytes) as %r with tables %s.", user, filename, len(content), ref,
                     ", ".join(upload.tables))
+        if not assistant and self.project is not None:
+            self._hide(ref, upload.tables)
         for editor, session in sessions:
             self._in_session(session, partial(_bind, editor, source, ref))
         return upload
+
+    def _hide(self, ref: str, tables: Sequence[str]) -> None:
+        """Turn ``tables`` of the new source ``ref`` off for the assistant in the project file's ``catalog:``."""
+        from panel_flowdash.project import _FILE_LOCK
+
+        from .catalog import SECTION as CATALOG, raw_section
+
+        try:
+            with _FILE_LOCK:
+                section = raw_section(self.project)
+                section[ref] = {"tables": {table: {"assistant": False} for table in tables}}
+                self.project.set(CATALOG, section)
+        except (ProjectError, OSError) as exc:
+            logger.warning("Could not turn the new source %r off for the assistant: %s", ref, type(exc).__name__)
+
+    # ------------------------------------------------------------------
+    # Connected sources
+
+    def _open(self, location: str, ref: str) -> Source:
+        """The one source ``location`` names, read as ``lumen serve`` reads its data, named ``ref``."""
+        from .app import resolve_sources
+
+        location = location.strip()
+        if not location:
+            raise UploadError("Give a file, a URL or a connection string.")
+        if _REFERENCE.search(location):
+            from panel_flowdash.project import expand_env
+
+            try:
+                location = expand_env(location)
+            except ValueError as exc:
+                raise UploadError(str(exc)) from None
+        sources = resolve_sources([location])
+        if len(sources) != 1:
+            raise UploadError(f"That gives {len(sources)} sources; connect one at a time.")
+        (source,) = sources
+        with param.edit_constant(source):
+            source.name = ref
+        return source
+
+    def read_location(self, location: str, name: str | None = None, *, app: t.Any) -> tuple[Preview, Source]:
+        """
+        The source ``location`` names, as ``connect`` would add it, and a
+        preview of it; only for an admin. Raises ``UploadError`` with why it
+        cannot be read. Queries the source, so call it off the event loop.
+        """
+        from .nodes import listed_tables
+
+        if not _is_admin(app):
+            raise UploadError("Only admins can connect sources.")
+        # Backslash joins the URL/path separators so a Windows local path's drive
+        # letter and directories are not swept into the stem with it.
+        stem = re.split(r"[/\\:?@]", location.strip().rstrip("/"))[-1].rsplit(".", 1)[0] if location else ""
+        # A source listed without its credentials is replaced by connecting it again under its name.
+        ref = self._ref(name or stem or "source", free=self._broken)
+        try:
+            source = self._open(location, ref)
+            tables = listed_tables(source)
+            previews = [table_preview(source, table) for table in tables[:PREVIEW_TABLES]]
+        except UploadError:
+            raise
+        except Exception as exc:
+            from panel_flowdash.value_text import error_text, redact_secrets
+
+            raise UploadError(f"Could not read it: {redact_secrets(error_text(exc))}") from None
+        if not tables:
+            raise UploadError("It has no tables.")
+        return Preview(ref, tables, previews), source
+
+    def connect(
+        self, location: str, name: str | None = None, *, app: t.Any, assistant: bool = True,
+        source: Source | None = None,
+    ) -> Connection:
+        """
+        Add the source ``location`` names as ``name``, for every session,
+        and keep it in the manifest so it is connected again when the app
+        starts; ``source`` is the one ``read_location`` read, if it did.
+        Only an admin may. Raises ``UploadError`` with why it was refused or
+        could not be read.
+        """
+        if not _is_admin(app):
+            raise UploadError("Only admins can connect sources.")
+        location = location.strip()
+        if "://" not in location and Path(location).exists():
+            # A path the app was given is kept whole, so a restart elsewhere still finds it.
+            location = str(Path(location).resolve())
+        kept, secret = stored_location(location)
+        if source is None:
+            _, source = self.read_location(location, name, app=app)
+        user = _identity_name(app)
+        with self._lock:
+            ref = self._ref(source.name, free=self._broken)
+            with param.edit_constant(source):
+                source.name = ref
+            connection = Connection(
+                ref=ref, location=kept, added_by=user,
+                added_at=dt.datetime.now(dt.UTC).isoformat(timespec="seconds"), id=uuid.uuid4().hex, secret=secret,
+            )
+            self._broken.pop(ref, None)
+            self._connections[ref] = connection
+            self._write_manifest()
+            self.sources[ref] = source
+            sessions = list(self._editors.items())
+        logger.info("Admin: %s connected the source %r.", user, ref)
+        if not assistant and self.project is not None:
+            from .nodes import listed_tables
+
+            self._hide(ref, listed_tables(source))
+        for editor, session in sessions:
+            self._in_session(session, partial(_bind, editor, source, ref))
+        return connection
+
+    def disconnect(self, ref: str, *, app: t.Any) -> list[Problem]:
+        """Remove the source an admin connected as ``ref``, for everyone, and its catalog settings. Only an admin may."""
+        if not _is_admin(app):
+            return [Problem("Only admins can remove sources, so this was not removed.")]
+        with self._lock:
+            connection = self._connections.pop(ref, None)
+            if connection is None:
+                return [Problem(f"There is no connected source {ref!r} any more.")]
+            self._broken.pop(ref, None)
+            self.sources.pop(ref, None)
+            self._write_manifest()
+            sessions = list(self._editors.items())
+        for editor, session in sessions:
+            self._in_session(session, partial(_unbind, editor, ref))
+        if self.project is not None:
+            self._forget_catalog(ref)
+        logger.info("Admin: %s removed the source %r.", _identity_name(app), ref)
+        return []
 
     def delete(self, ref: str, *, app: t.Any) -> list[Problem]:
         """
         Delete the upload ``ref`` for everyone: its source and its catalog
         settings. Its folder moves to the trash, with a note of who deleted
-        it and when, and is removed ``trash_days`` later. Only an admin may.
+        it and when, and is removed ``trash_days`` later. Only an admin, or
+        whoever uploaded it, may.
         """
-        if not _is_admin(app):
-            return [Problem("Only admins can delete uploads, so this was not deleted.")]
+        with self._lock:
+            upload = self._uploads.get(ref)
+        if upload is None:
+            return [Problem(f"There is no upload {ref!r} any more.")]
+        if not self.may_delete(upload, app):
+            return [Problem("Only admins or whoever uploaded it can delete it, so this was not deleted.")]
         user = _identity_name(app)
         with self._lock:
             upload = self._uploads.pop(ref, None)
@@ -725,7 +1119,7 @@ class Uploads:
 
         _schedule(callback, session.doc, session.loop)
 
-    def attach(self, app: t.Any) -> UploadButton | None:
+    def attach(self, app: t.Any) -> t.Any:
         """
         Give ``app``'s session the uploads made from now on, and an Add data
         button in its dashboard bar, shown to someone ``offered`` says may
@@ -739,6 +1133,8 @@ class Uploads:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             loop = None
+        from .add_data import UploadButton
+
         with self._lock:
             self._editors[editor] = _Session(doc, loop)
         button = UploadButton(self, app)
@@ -767,222 +1163,12 @@ def _refresh_palette(editor: t.Any) -> None:
             palette.refresh()
 
 
-# ---------------------------------------------------------------------------
-# The dialog
-
-
-def _size(size: int) -> str:
-    for unit in ("bytes", "KB", "MB", "GB"):
-        if size < 1024 or unit == "GB":
-            return f"{size:,.0f} {unit}" if unit == "bytes" else f"{size:,.1f} {unit}"
-        size /= 1024
-    return str(size)
-
-
-class UploadDialog(Viewer):
-    """The Add data dialog: a file, the table name it gets and, for Excel, its sheet."""
-
-    def __init__(self, uploads: Uploads, app: t.Any, on_added: Callable[[Upload], t.Any] | None = None, **params):
-        super().__init__(**params)
-        self.uploads = uploads
-        self._app = app
-        self._on_added = on_added
-        self._file = pmui.FileInput(
-            label="Choose a file", icon="upload_file", variant="outlined", margin=0,
-            css_classes=["flowdash-upload-file"],
-        )
-        self._file.param.watch(self._on_file, "value")
-        self._chosen = pmui.Typography("", variant="body2", margin=0, sx={"color": "text.secondary"})
-        self._name = pmui.TextInput(
-            label="Table name", placeholder="e.g. sales", sizing_mode="stretch_width", margin=0,
-            css_classes=["flowdash-upload-name"],
-        )
-        self._sheet = pmui.Select(
-            label="Sheet", options={"All sheets, a table each": ""}, value="", visible=False,
-            sizing_mode="stretch_width", margin=0, css_classes=["flowdash-upload-sheet"],
-        )
-        self._note = pmui.Typography("", variant="caption", margin=0, sx={"color": "text.secondary"})
-        self._alert = pmui.Alert(object="", severity="error", visible=False, sizing_mode="stretch_width", margin=0)
-        self._cancel = pmui.Button(label="Cancel", variant="outlined", color="default", margin=0)
-        self._cancel.on_click(lambda _event: self.close())
-        self._submit = pmui.Button(
-            label="Add data", icon="upload", variant="contained", margin=0, disabled=True,
-            css_classes=["flowdash-upload-submit"],
-        )
-        self._submit.on_click(self._on_submit)
-        self._dialog = pmui.Dialog(
-            pn.Column(
-                pn.Row(self._file, self._chosen, margin=0, styles={"align-items": "center", "gap": "12px"}),
-                self._name,
-                self._sheet,
-                self._note,
-                self._alert,
-                pn.Row(pn.layout.HSpacer(), self._cancel, self._submit, margin=0, sizing_mode="stretch_width",
-                       styles={"gap": "8px"}),
-                margin=0, sizing_mode="stretch_width", styles={"gap": "16px", "min-width": "min(480px, 80vw)"},
-                css_classes=["flowdash-upload-dialog"],
-            ),
-            title="Add data", open=False, show_close_button=True, close_on_click=False, width_option="sm",
-            # Its content stretches, which would otherwise stretch the dashboard bar item holding it.
-            sizing_mode="fixed", width=0, height=0, margin=0,
-        )
-        self._content: bytes | None = None
-        self._filename = ""
-
-    def _sync_limits(self):
-        allowed = self.uploads.allowed()
-        self._file.param.update(
-            accept=",".join(f".{ext}" for ext in allowed), max_file_size=self.uploads.max_bytes(),
-        )
-        types = ", ".join(f.label for f in allowed.values()) or "none"
-        self._note.object = (
-            f"{types}, up to {self.uploads.settings().max_mb} MB. The table is shared: everyone who can open "
-            "this app can use it in dashboards and, unless an admin turns it off, the assistant."
-        )
-
-    def open(self):
-        """Open the dialog with no file chosen."""
-        with pn.io.hold():
-            self._content, self._filename = None, ""
-            self._chosen.object = "No file chosen"
-            self._name.value = ""
-            self._sheet.param.update(options={"All sheets, a table each": ""}, value="", visible=False)
-            self._alert.visible = False
-            self._submit.param.update(disabled=True, loading=False)
-            self._sync_limits()
-            self._dialog.open = True
-
-    def close(self):
-        self._dialog.open = False
-        self._content = None
-
-    def choose(self, content: bytes, filename: str):
-        """Take ``content`` as the file ``filename`` to upload, filling in its table name and, for Excel, its sheets."""
-        self._content, self._filename = content, Path(filename).name
-        with pn.io.hold():
-            self._chosen.object = f"{self._filename}, {_size(len(content))}"
-            self._name.value = _slug(Path(self._filename).stem)
-            sheets = excel_sheets(content) if extension_of(self._filename) == "xlsx" else []
-            self._sheet.param.update(
-                options={"All sheets, a table each": "", **{s: s for s in sheets}}, value="", visible=len(sheets) > 1,
-            )
-            refusal = self.uploads.refusal(self._filename, len(content), self._app)
-            self._alert.param.update(object=refusal or "", visible=refusal is not None)
-            self._submit.disabled = refusal is not None
-
-    def _on_file(self, event):
-        if event.new is None:
-            return
-        self.choose(event.new, self._file.filename or "upload")
-        self._file.clear()
-
-    def submit(self) -> Upload | None:
-        """Upload the chosen file; show why if it is refused. Reads the file, so prefer ``_on_submit`` on a server."""
-        if self._content is None:
-            return None
-        try:
-            upload = self.uploads.add(
-                self._content, self._filename, self._name.value or None, app=self._app, sheet=self._sheet.value or None,
-            )
-        except UploadError as exc:
-            self._alert.param.update(object=str(exc), visible=True)
-            return None
-        self._added(upload)
-        return upload
-
-    async def _on_submit(self, _event=None):
-        if self._content is None:
-            return
-        self._submit.loading = True
-        self._alert.visible = False
-        try:
-            upload = await asyncio.to_thread(
-                self.uploads.add, self._content, self._filename, self._name.value or None, app=self._app,
-                sheet=self._sheet.value or None,
-            )
-        except UploadError as exc:
-            self._alert.param.update(object=str(exc), visible=True)
-            return
-        finally:
-            self._submit.loading = False
-        self._added(upload)
-
-    def _added(self, upload: Upload):
-        self.close()
-        tables = ", ".join(upload.tables)
-        noun = "table" if len(upload.tables) == 1 else "tables"
-        if self._app is not None and hasattr(self._app, "_notify"):
-            self._app._notify(
-                "success", f"Added the {noun} {tables} as source {upload.ref}; find it in the component list.",
-                duration=6000,
-            )
-        if self._on_added is not None:
-            self._on_added(upload)
-
-    def __panel__(self):
-        return self._dialog
-
-
-# While editing, the dashboard bar's breadcrumb needs the room of the button's label below this width.
-_EDIT_LABEL_WIDTH = 1600
-
-
-def _icon_only(editing: bool) -> list[str]:
-    """
-    The stylesheet that shows only the button's icon, with its name as a
-    tooltip: on narrow screens, as the dashboard bar's Share does, and
-    below ``_EDIT_LABEL_WIDTH`` while editing.
-    """
-    try:
-        from panel_flowdash.ui.dashboard_bar import (
-            ICON_ONLY_WHEN_COMPACT, icon_only_below,
-        )
-    except ImportError:
-        return []
-    return [icon_only_below(_EDIT_LABEL_WIDTH) if editing else ICON_ONLY_WHEN_COMPACT]
-
-
-class UploadButton(Viewer):
-    """The dashboard bar's Add data button and its dialog, for someone who may upload."""
-
-    def __init__(self, uploads: Uploads, app: t.Any, **params):
-        super().__init__(**params)
-        self.uploads = uploads
-        self._app = app
-        self.dialog = UploadDialog(uploads, app)
-        self.button = pmui.Button(
-            label="Add data", icon="upload_file", variant="text", size="small", margin=(5, 2),
-            description="Add data: upload a file as a table for everyone", css_classes=["flowdash-add-data"],
-        )
-        self.button.on_click(lambda _event: self.open())
-        self._layout = pn.Row(self.button, self.dialog, margin=0, visible=False, sizing_mode="fixed")
-        editor = getattr(app, "_editor", None)
-        if editor is not None:
-            editor.param.watch(lambda _event: self.sync(), "editable")
-        self.sync()
-
-    def sync(self):
-        """Show the button if uploads are offered to this session."""
-        editor = getattr(self._app, "_editor", None)
-        with pn.io.hold():
-            self.button.stylesheets = _icon_only(bool(editor is not None and editor.editable))
-            self._layout.visible = editor is not None and self.uploads.offered(self._app)
-
-    def open(self):
-        if not self.uploads.offered(self._app):
-            self.sync()
-            return
-        self.dialog.open()
-
-    def __panel__(self):
-        return self._layout
-
-
 _register()
 
 
 __all__ = [
-    "ENTRY_POINT_GROUP", "SECTION", "UPLOADS_KEY", "Upload", "UploadButton", "UploadDialog", "UploadError",
-    "UploadFormat", "UploadSettings", "Uploads", "excel_sheets", "extension_of", "read_file", "read_frames",
-    "register_upload_handler", "upload_formats", "upload_settings",
+    "ENTRY_POINT_GROUP", "SECTION", "UPLOADS_KEY", "Connection", "Preview", "TablePreview", "Upload",
+    "UploadError", "UploadFormat", "UploadSettings", "Uploads", "excel_sheets", "extension_of", "read_file",
+    "read_frames", "register_upload_handler", "resolved_location", "stored_location", "table_preview",
+    "upload_formats", "upload_settings",
 ]

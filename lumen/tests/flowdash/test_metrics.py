@@ -1,5 +1,6 @@
 import datetime as dt
 import logging
+import re
 import sqlite3
 
 import pytest
@@ -137,18 +138,32 @@ def test_load_reports_every_problem():
     ]
 
 
+def failures_for(source, text):
+    project = parse_project(text, PROJECT_FILE, {SOURCES_KEY: {"data": source}})
+    return read_metrics(project), [str(w) for w in project.warnings]
+
+
 def test_check_against_the_source_points_at_the_column(duck):
-    text = PROJECT.replace("year: p_year", "year: p_yaer")
-    with pytest.raises(ProjectError) as info:
-        metrics_for(duck, text)
-    assert str(info.value) == "flowdash.yaml:11:13: Unknown column 'p_yaer' in dimension 'year'. Did you mean 'p_year'?"
+    metrics, warnings = failures_for(duck, PROJECT.replace("year: p_year", "year: p_yaer"))
+    assert warnings == [
+        "flowdash.yaml:11:13: Metric 'capacity' is left out: Unknown column 'p_yaer' in dimension 'year'. "
+        "Did you mean 'p_year'?"
+    ]
+    assert list(metrics) == ["top_projects"] and metrics.failures["capacity"].kind == "column"
 
 
 def test_check_reports_an_unknown_table_and_engine_errors(duck):
-    with pytest.raises(ProjectError, match=r"flowdash.yaml:5:12: The source 'data' has no table 'turbine'. Did you mean 'turbines'"):
-        metrics_for(duck, PROJECT.replace("table: turbines", "table: turbine"))
-    with pytest.raises(ProjectError, match=r"flowdash.yaml:\d+:\d+: Metric 'top_projects': .*'nope'"):
-        metrics_for(duck, PROJECT.replace("FROM turbines\n", "FROM nope\n"))
+    metrics, warnings = failures_for(duck, PROJECT.replace("table: turbines", "table: turbine"))
+    assert warnings[0].startswith(
+        "flowdash.yaml:5:12: Metric 'capacity' is left out: The source 'data' has no table 'turbine'. "
+        "Did you mean 'turbines'"
+    )
+    failure = metrics.failures["capacity"]
+    assert failure.kind == "table" and failure.message.startswith("The source 'data' has no table 'turbine'.")
+    assert list(metrics) == ["top_projects"]
+    metrics, warnings = failures_for(duck, PROJECT.replace("FROM turbines\n", "FROM nope\n"))
+    assert list(metrics) == ["capacity"] and "'nope'" in metrics.failures["top_projects"].message
+    assert re.match(r"flowdash.yaml:\d+:\d+: Metric 'top_projects' is left out: Metric 'top_projects': .*'nope'", warnings[0])
 
 
 def test_metric_over_a_source_not_served_is_left_out_with_a_warning(duck):
@@ -419,7 +434,11 @@ def test_build_routes_reads_the_project_file(tmp_path, monkeypatch):
     project.write_text(PROJECT.replace("source: data", "source: turbines"))
     routes = build_routes([str(data)], project=project)
     assert routes
+    # A metric that does not work on its source is left out; the app serves the others.
     project.write_text(PROJECT.replace("source: data", "source: turbines").replace("p_year, op", "p_yeer, op"))
+    assert build_routes([str(data)], project=project)
+    # A definition the loader cannot read stops startup with where it is written.
+    project.write_text(PROJECT.replace("source: data", "source: turbines").replace("COUNT(*)", "COUNT(*"))
     with pytest.raises(ProjectError, match=r"flowdash.yaml:\d+:\d+: "):
         build_routes([str(data)], project=project)
 
@@ -601,14 +620,15 @@ def test_an_empty_list_drops_its_condition_in_each_select_of_the_result(duck, sq
     assert len(run(metric_pipeline(metric, duck, Query(parameters={"ex": []})))) == rows
 
 
-def test_an_empty_list_default_in_a_subquery_stops_startup(duck):
+def test_an_empty_list_default_in_a_subquery_leaves_the_metric_out(duck):
     text = (
         "metrics:\n  m:\n    source: data\n    sql: \"SELECT p_name FROM turbines WHERE p_name NOT IN "
         "(SELECT p_name FROM turbines WHERE t_state IN (:ex))\"\n"
         "    parameters:\n      ex: {type: \"list[string]\", default: []}\n"
     )
-    with pytest.raises(ProjectError, match="'ex' of metric 'm' is an empty list"):
-        metrics_for(duck, text)
+    metrics, warnings = failures_for(duck, text)
+    assert list(metrics) == [] and "'ex' of metric 'm' is an empty list" in metrics.failures["m"].message
+    assert len(warnings) == 1
 
 
 def test_a_sql_metric_filter_never_reaches_the_right_side_of_except(duck):
