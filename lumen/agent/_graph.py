@@ -17,6 +17,7 @@ from panel_flowdash.agent import (
 from ..flowdash import (
     COMPONENTS, LumenViewNode, bound_sources, host_metrics,
 )
+from ..flowdash.access import can_access_metric
 from ..flowdash.data import hidden_reads_of
 
 logger = logging.getLogger(__name__)
@@ -46,13 +47,16 @@ def metrics(ops: DashboardOps) -> dict[str, Any]:
             continue
         except Exception as exc:
             logger.warning("Could not read the app's metric %r (%s).", name, type(exc).__name__)
-    # A metric computed from a table the catalog turns off for the assistant is left out with it.
+    # A metric the session cannot access or computed from a table turned off for the assistant is left out.
     try:
-        hidden = {name for name, metric in snapshot.items() if hidden_reads_of(metric, ops.editor.context)}
+        denied = {
+            name for name, metric in snapshot.items()
+            if not can_access_metric(metric, ops.editor.context) or hidden_reads_of(metric, ops.editor.context)
+        }
     except Exception as exc:
         logger.warning("Could not check the metrics' tables against the catalog (%s).", type(exc).__name__)
-        hidden = set()
-    return {name: metric for name, metric in snapshot.items() if name not in hidden}
+        denied = set()
+    return {name: metric for name, metric in snapshot.items() if name not in denied}
 
 
 def nodes(ops: DashboardOps, component: str | None = None) -> list[str]:

@@ -79,6 +79,11 @@ from ..transforms.sql import (
     SQLMinMax, SQLSort,
 )
 from ..util import get_dataframe_schema
+from .access import (
+    access_denied_metric, access_denied_source, access_denied_tables,
+    authorized_tables, can_access_metric, can_access_source, can_access_table,
+    unauthorized_reads,
+)
 from .checks import (
     CheckDiagnostic, _engine_error, _read, _unverified, check_chart,
     check_filter_config, check_query, check_source_config, check_sql_config,
@@ -1589,6 +1594,8 @@ def _ref_source(ref: str, context: Mapping[str, Any]) -> Source | None:
     source = lookup_source(ref, context)
     if source is None:
         raise ValueError(missing_source(ref, host_sources(context)))
+    if not can_access_source(source, context) or not can_access_source(ref, context):
+        raise PermissionError(access_denied_source(ref))
     return source
 
 
@@ -1685,7 +1692,7 @@ def sql_completions(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str,
         return None
     if Choices is None or not isinstance(source, Source) or is_failure(source):
         return None
-    tables = listed_tables(source)
+    tables = authorized_tables(source)
     stored = source._get_schema_cache() or {}
     types: dict[str, str] = dict.fromkeys(tables, "table")
     words = list(tables)
@@ -1821,6 +1828,10 @@ class SQLNode(GlobalFilterTarget, LumenNode):
         merge(self.source)
         if self._input is None:
             return None
+        if not can_access_source(self._input, self._context):
+            raise PermissionError(access_denied_source(self._input.name))
+        if denied := unauthorized_reads(self.sql, self._input, self._context):
+            raise PermissionError(access_denied_tables(denied))
         limit = effective_limit(self.editor, self.limit)
         return compile_sql(self._input, self.sql, self.table or default_table(self.sql), limit)
 
@@ -1828,7 +1839,7 @@ class SQLNode(GlobalFilterTarget, LumenNode):
         """The error as one readable message, with the line and column of the query it concerns."""
         diagnostic = getattr(exc, "diagnostic", None)
         if diagnostic is None and isinstance(self._input, BaseSQLSource) and not isinstance(
-            exc, (ValueError, QueryTimeoutError)
+            exc, (ValueError, PermissionError, QueryTimeoutError)
         ):
             limit = effective_limit(self.editor, self.limit)
             try:
@@ -1994,13 +2005,15 @@ class TableNode(PipelineNode):
             return self.source
         try:
             return _ref_source(self.ref, self._context)
-        except ValueError:
+        except (ValueError, PermissionError):
             return None
 
     def _resolve(self) -> Pipeline | None:
         source = self.source if self.source is not None else _ref_source(self.ref, self._context)
         if source is None or not self.table:
             return None
+        if not can_access_table(source, self.table, self._context):
+            raise PermissionError(access_denied_tables([self.table], self.ref or None))
         return table_pipeline(source, self.table, effective_limit(self.editor, self.limit))
 
     @param.output(param.Parameter)
@@ -2291,6 +2304,8 @@ class MetricNode(PipelineNode):
         if metric is None:
             failure = getattr(metrics, "failures", {}).get(self.metric)
             raise ValueError(failure.message if failure is not None else missing_metric(self.metric, metrics))
+        if not can_access_metric(metric, self._context):
+            raise PermissionError(access_denied_metric(self.metric))
         source = lookup_source(metric.source, self._context)
         if source is None:
             raise ValueError(missing_source(metric.source, host_sources(self._context)))
@@ -2330,6 +2345,8 @@ class MetricNode(PipelineNode):
             return {"label": f"Missing metric: {self.metric}", "kind": "missing", "icon": "error_outline",
                     "detail": f"The project no longer defines the {self.metric} metric, so this number cannot "
                               f"be computed. Pick another metric or define it again in {metrics_page()}."}
+        if not can_access_metric(metric, self._context):
+            return None
         from .save_metric import (
             aggregating_step, derived_label, describe_reading,
         )

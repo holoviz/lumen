@@ -349,9 +349,14 @@ class CatalogSettings(Viewer):
 
     def rows(self) -> list[dict[str, t.Any]]:
         """What the table shows for each table of each source, in the order the sources are served."""
-        tables, self._listing_errors = catalog_tables(self.project.context or {}, self.section())
+        from .access import can_access_table
+
+        context = self.project.context or {}
+        tables, self._listing_errors = catalog_tables(context, self.section())
         rows = []
         for entry in tables:
+            if not can_access_table(entry.source, entry.table, context, app=self._app):
+                continue
             key = (entry.ref, entry.table)
             info = self._infos.get(key)
             if info is None and (known := known_info(entry.source, entry.table)) is not None:

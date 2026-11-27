@@ -478,6 +478,9 @@ def _lumen_session(factory: Any, uploads: Uploads | None = None, data: bool = Fa
         if data:
             serve_data(pn.state.curdoc)
         app = factory(*args, **kwargs)
+        from .access import attach_access
+
+        attach_access(app)
         if data:
             redirect_moved_admin_pages(app)
         if uploads is not None:

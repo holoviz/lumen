@@ -732,9 +732,12 @@ class MetricsSettings(Viewer):
 
     def statuses(self) -> list[MetricStatus]:
         """Each metric of the file as it is now, with whether the app uses it."""
+        from .access import can_access_metric
+
         statuses, general = metric_statuses(self.project)
         self._general = general
-        return statuses
+        context = self.project.context or {}
+        return [status for status in statuses if can_access_metric(status, context, app=self._app)]
 
     def _passes(self, status: MetricStatus) -> bool:
         if self.filter == "problems" and status.check == "valid":
