@@ -2166,13 +2166,14 @@ class Answer(param.Parameterized):
             # stretches keeps its minimum height, and a faceted chart drawn
             # taller than that spills over the sections below it
             view.kwargs = {**view.kwargs, "sizing_mode": "stretch_width", "min_height": None}
-            # The pane may already be drawn, e.g. by its editor while the chart was polished
-            view.update()
         try:
             # Drawn here, because inside the card a failure only becomes a
             # notification once the chat UI has turned those on, and a
             # notebook shows none, so the chart would just be missing
             view.get_panel()
+            if isinstance(view, VegaLiteView):
+                # The pane may already be drawn, e.g. by its editor while the chart was polished
+                view.update()
         except Exception as e:
             return Alert(
                 object=f"{type(e).__name__}: {e}", title="The chart could not be drawn",
