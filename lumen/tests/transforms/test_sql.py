@@ -1672,6 +1672,15 @@ def test_source_query_with_a_range_value():
     assert source.get("df", A=Range(1, 3))["A"].tolist() == [1, 2, 3]
 
 
+@pytest.mark.skipif(DuckDBSource is None, reason="DuckDBSource not available")
+def test_cache_key_of_a_range_follows_its_value_not_its_identity():
+    # A freed Range can pass its id() on, which made Range(1, 3) reuse the rows of Range(1, 3, closed="left")
+    source = DuckDBSource.from_df({"df": pd.DataFrame({"A": [0, 1, 2, 3]})})
+    left, also_left = Range(1, 3, closed="left"), Range(1, 3, closed="left")
+    assert source._get_key("df", A=left) == source._get_key("df", A=also_left)
+    assert source._get_key("df", A=left) != source._get_key("df", A=Range(1, 3))
+
+
 def test_sql_prefilter_range_value():
     result = SQLPreFilter.apply_to(
         "SELECT n FROM obs", conditions=[("obs", [("A", Range(1, 3, closed="left"))])]

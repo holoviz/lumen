@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import fnmatch
 import hashlib
 import json
@@ -287,6 +288,22 @@ def cached_metadata(method, locks=None):
     return wrapped
 
 
+
+def _by_value(value: Any) -> Any:
+    """
+    A query value with dataclasses, such as a Range, as plain tuples, so it
+    hashes by its fields; Panel hashes an object it does not know by id(),
+    which a freed Range can hand on to the next, so two different ranges
+    could share a cache key.
+    """
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return (type(value).__name__, *(_by_value(v) for v in dataclasses.astuple(value)))
+    if isinstance(value, dict):
+        return {k: _by_value(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return type(value)(_by_value(v) for v in value)
+    return value
+
 class Source(MultiTypeComponent):
     """
     `Source` components provide allow querying all kinds of data.
@@ -469,7 +486,7 @@ class Source(MultiTypeComponent):
         sha.update(table.encode('utf-8'))
         if 'sql_transforms' in query:
             sha.update(_generate_hash([hash(t) for t in query.pop('sql_transforms')]))
-        sha.update(_generate_hash(query))
+        sha.update(_generate_hash(_by_value(query)))
         return sha.hexdigest()
 
     def _get_source_hash(self):
