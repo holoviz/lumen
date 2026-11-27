@@ -1208,14 +1208,24 @@ def test_sql_sample_mysql_size():
 def test_sql_sample_sqlite_percent():
     """Test percent-based sampling in SQLite"""
     result = SQLSample.apply_to("SELECT * FROM TABLE", percent=20, write="sqlite")
-    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery WHERE RANDOM() < 0.2"
+    # sqlglot normalizes sqlite's signed-integer RANDOM() into a [0, 1) float so the
+    # comparison against `percent` is meaningful (raw RANDOM() < 0.2 is true ~50% of the time).
+    expected = (
+        "SELECT * FROM (SELECT * FROM TABLE) AS subquery "
+        "WHERE (CAST(RANDOM() & 9007199254740991 AS REAL) / 9007199254740992) < 0.2"
+    )
     assert result == expected
 
 
 def test_sql_sample_sqlite_size():
     """Test size-based sampling in SQLite"""
     result = SQLSample.apply_to("SELECT * FROM TABLE", size=100, write="sqlite")
-    expected = "SELECT * FROM (SELECT * FROM TABLE) AS subquery ORDER BY RANDOM() LIMIT 100"
+    # See test_sql_sample_sqlite_percent for why sqlglot now normalizes RANDOM() to a float;
+    # ordering by the normalized value is still uniformly random.
+    expected = (
+        "SELECT * FROM (SELECT * FROM TABLE) AS subquery "
+        "ORDER BY (CAST(RANDOM() & 9007199254740991 AS REAL) / 9007199254740992) LIMIT 100"
+    )
     assert result == expected
 
 
