@@ -2352,6 +2352,25 @@ def test_a_tap_on_a_map_with_a_time_slider_picks_the_step_on_screen():
     assert (row["lon"], row["lat"], row["v"]) == (1.0, 0.0, 1.0)
 
 
+def test_a_chart_with_a_slider_and_no_x_or_y_reads_its_axes_from_the_step_on_screen():
+    frame = pd.DataFrame({
+        "lon": [1.0, 2.0, 3.0, 4.0], "lat": [5.0, 6.0, 7.0, 8.0],
+        "mag": [4.5, 5.5, 4.7, 5.6], "mag_class": ["Light", "Moderate", "Light", "Moderate"],
+    })
+    pipeline = Pipeline(source=read({"quakes": frame}), table="quakes")
+    view = hvPlotView(pipeline=pipeline, kind="points", c="mag", groupby=["mag_class"])
+    answer = Answer(question="?", status="success", pipeline=pipeline, view=view)
+    answer.__panel__()
+    stream = answer._streams[-1]
+    # Before any step is drawn there are no axes to read, so a tap selects nothing
+    stream.event(x=3.9, y=7.9)
+    assert answer.selection is None
+    view._panel.object["Moderate"]
+    stream.event(x=3.9, y=7.9)
+    (row,) = answer.selection.to_dict("records")
+    assert (row["lon"], row["lat"], row["mag_class"]) == (4.0, 8.0, "Moderate")
+
+
 async def test_ask_about_sends_the_rows_and_the_answer_before(llm, frame_source):
     llm.set_responses([_plan(("ChatAgent", "Explain")), "That is category A, at 10.5."])
     original = Answer(

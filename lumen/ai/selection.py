@@ -208,20 +208,29 @@ def _grid_element(element: Any) -> Any:
     return None
 
 
+def _axes(element: Any) -> tuple[str, str] | None:
+    """The columns on a plot's x and y axes, or None when it does not have two."""
+    if isinstance(element, hv.DynamicMap):
+        # Its kdims are its slider dimensions, so the axes are the shown step's
+        element = element.last
+    if isinstance(element, hv.Overlay):
+        element = next((item for item in reversed(element.values()) if not isinstance(item, hv.Tiles)), None)
+    names = [dim.name for dim in getattr(element, "kdims", [])[:2]]
+    return (names[0], names[1]) if len(names) == 2 else None
+
+
 def _tap_stream(element: Any, view: View, on_rows: Callable[[pd.DataFrame | None], None]) -> hv.streams.Tap:
     stream = hv.streams.Tap(source=element)
-    # A DynamicMap's kdims are its slider dimensions, not its axes
-    if view.x and view.y:
-        xcol, ycol = view.x, view.y
-    else:
-        xcol, ycol = (dim.name for dim in element.kdims[:2])
 
     def on_tap(x=None, y=None):
         df = as_pandas(view.pipeline.data)
-        if x is None or y is None or xcol not in df or ycol not in df:
-            return
         # The plot on screen, which the slider steps; the stream's source can be a copy of it
         shown = view._panel.object
+        # Read on each tap, since a DynamicMap has no step drawn until it is shown
+        axes = (view.x, view.y) if view.x and view.y else _axes(shown if isinstance(shown, hv.DynamicMap) else element)
+        if x is None or y is None or axes is None or axes[0] not in df or axes[1] not in df:
+            return
+        xcol, ycol = axes
         if isinstance(shown, hv.DynamicMap) and shown.kdims and shown.current_key is not None:
             # Only the step the slider shows, not every step's cells
             key = shown.current_key if isinstance(shown.current_key, tuple) else (shown.current_key,)
