@@ -2371,6 +2371,19 @@ def test_a_chart_with_a_slider_and_no_x_or_y_reads_its_axes_from_the_step_on_scr
     assert (row["lon"], row["lat"], row["mag_class"]) == (4.0, 8.0, "Moderate")
 
 
+def test_the_axes_of_a_step_drawn_over_tiles_are_the_datas_not_the_tiles():
+    import holoviews as hv
+
+    from lumen.ai.selection import _axes
+    points = pd.DataFrame({"lon": [1.0, 2.0], "lat": [3.0, 4.0], "kind": ["a", "b"]})
+    dmap = hv.DynamicMap(
+        lambda kind: hv.Tiles() * hv.Points(points[points.kind == kind], ["lon", "lat"]), kdims="kind",
+    ).redim.values(kind=["a", "b"])
+    assert _axes(dmap) is None
+    dmap["a"]
+    assert _axes(dmap) == ("lon", "lat")
+
+
 async def test_ask_about_sends_the_rows_and_the_answer_before(llm, frame_source):
     llm.set_responses([_plan(("ChatAgent", "Explain")), "That is category A, at 10.5."])
     original = Answer(
