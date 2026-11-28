@@ -911,11 +911,20 @@ KILO_TOOL_CHOICE_ERROR = {
 }
 
 
+def test_kilo_free_tier_asks_for_json_in_plain_text(monkeypatch):
+    monkeypatch.delenv("KILO_API_KEY", raising=False)
+    assert Kilo().mode is Mode.MD_JSON
+
+
+def test_kilo_with_a_key_keeps_tool_calls():
+    assert Kilo(api_key="sk-test").mode is Mode.TOOLS
+
+
 @pytest.mark.parametrize("rejection", [KILO_UPSTREAM_ERROR, KILO_TOOL_CHOICE_ERROR], ids=["upstream", "tool-choice"])
 async def test_kilo_falls_back_to_json_mode_when_upstream_rejects(monkeypatch, rejection):
     """The free tier's upstream rejects a forced tool call, so Kilo asks for
     JSON in plain text instead and keeps doing so."""
-    llm = Kilo()
+    llm = Kilo(mode=Mode.TOOLS)
     modes = []
 
     async def fake_send(self, _model_spec, _messages, **kwargs):
@@ -931,7 +940,7 @@ async def test_kilo_falls_back_to_json_mode_when_upstream_rejects(monkeypatch, r
 
 
 async def test_kilo_other_rejections_are_reraised(monkeypatch):
-    llm = Kilo()
+    llm = Kilo(mode=Mode.TOOLS)
 
     async def fake_send(self, _model_spec, _messages, **kwargs):
         raise _kilo_rejection({"error": "bad schema", "error_type": "invalid_request"})
@@ -943,7 +952,7 @@ async def test_kilo_other_rejections_are_reraised(monkeypatch):
 
 
 async def test_kilo_upstream_rejection_in_json_mode_is_reraised(monkeypatch):
-    llm = Kilo()
+    llm = Kilo(mode=Mode.TOOLS)
     calls = []
 
     async def fake_send(self, _model_spec, _messages, **kwargs):
