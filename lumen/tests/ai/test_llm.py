@@ -911,9 +911,13 @@ KILO_TOOL_CHOICE_ERROR = {
 }
 
 
-def test_kilo_asks_for_json_in_plain_text():
-    # Tool call arguments lose their newlines on some free models (#2444).
+def test_kilo_free_tier_asks_for_json_in_plain_text(monkeypatch):
+    monkeypatch.delenv("KILO_API_KEY", raising=False)
     assert Kilo().mode is Mode.MD_JSON
+
+
+def test_kilo_with_a_key_keeps_tool_calls():
+    assert Kilo(api_key="sk-test").mode is Mode.TOOLS
 
 
 @pytest.mark.parametrize("rejection", [KILO_UPSTREAM_ERROR, KILO_TOOL_CHOICE_ERROR], ids=["upstream", "tool-choice"])
