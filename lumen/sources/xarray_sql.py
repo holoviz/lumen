@@ -8,6 +8,7 @@ the dataset is exposed as a separate SQL table with coordinate columns.
 
 from __future__ import annotations
 
+from itertools import combinations
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -16,7 +17,7 @@ import param
 from ..transforms.sql import SQLFilter
 from ..util import try_import_xarray
 from .base import BaseSQLSource, cached
-from .duckdb import DuckDBSource
+from .duckdb import DuckDBSource, _quote_ident
 
 #: File extensions xarray reads (NetCDF, HDF5, Zarr and GRIB)
 XARRAY_EXTENSIONS = (
@@ -385,11 +386,10 @@ class XArraySQLSource(BaseSQLSource):
         if duckdb:
             from xarray_sql import to_dataset
             result = self._ctx._connection.sql(sql)
-            schema = result.limit(0).to_arrow_table().schema
+            names = result.columns
         else:
             result = self._ctx.sql(sql)
-            schema = result.schema()
-        names = set(schema.names)
+            names = result.schema().names
         # Pass only the dims the result actually has a column for. Multiple
         # data vars need dims passed explicitly (the FROM clause is
         # ambiguous), but a bounds dim (e.g. nbnds) or a projecting/
@@ -397,37 +397,39 @@ class XArraySQLSource(BaseSQLSource):
         # result, and to_dataset(dims=...) errors on a dim it can't find.
         dims = [d for d in self._dataset.dims if d in names]
         if len(dims) < len(self._dataset.dims):
-            dims += self._derived_dims(schema)
+            dims += self._derived_dims(sql, dims, names)
         ds = to_dataset(result, dims=dims) if duckdb else result.to_dataset(dims=dims)
         # Coordinates come in the order the rows did, which a GROUP BY leaves
         # arbitrary, and a grid with unsorted coordinates plots and slices wrong
         return ds.sortby([d for d in dims if d in ds.coords])
 
-    def _derived_dims(self, schema) -> list[str]:
-        """Result columns the SQL derived to label rows, e.g.
-        ``CAST(time AS DATE) AS date`` or a ``CASE`` that names a season.
-
-        Only date, timestamp and text columns the source doesn't have qualify:
-        they can't hold a measured value, which is numeric, so the rows they
-        tell apart must be cells of the grid. Left out of the dims, the rows
-        that share the remaining dims collapse into one cell and the column
-        becomes a data variable, so the axis it was derived for is lost.
+    def _derived_dims(self, sql: str, dims: list[str], names: list[str]) -> list[str]:
+        """The fewest result columns the source doesn't have that, added to
+        ``dims``, give every row its own cell, e.g. ``CAST(time AS DATE) AS date``
+        when the SQL derives the time axis. Empty when ``dims`` already do, so
+        a label such as a ``CASE`` per (lat, lon) or a constant stays a variable.
         """
-        import pyarrow as pa
+        def n_cells(by):
+            by = ", ".join(map(_quote_ident, by))
+            return self.execute(f"SELECT COUNT(*) FROM (SELECT 1 FROM ({sql}) GROUP BY {by})").iloc[0, 0]
 
-        def is_label(dtype):
-            if pa.types.is_dictionary(dtype):
-                dtype = dtype.value_type
-            return (
-                pa.types.is_timestamp(dtype) or pa.types.is_date(dtype)
-                or pa.types.is_string(dtype) or pa.types.is_large_string(dtype)
-                or getattr(pa.types, 'is_string_view', lambda t: False)(dtype)
-            )
-
-        return [
-            field.name for field in schema
-            if field.name not in self._dataset.variables and is_label(field.type)
-        ]
+        cols = [name for name in names if name not in self._dataset.variables]
+        if not cols:
+            return []
+        distinct = ", ".join(f"COUNT(DISTINCT {_quote_ident(col)})" for col in cols)
+        n_rows, *counts = self.execute(f"SELECT COUNT(*), {distinct} FROM ({sql})").iloc[0]
+        n_values = dict(zip(cols, counts, strict=True))
+        kept_cells = n_cells(dims) if dims else min(n_rows, 1)
+        if kept_cells == n_rows:
+            return []
+        # An axis repeats its values in every cell of the other dims, so it has
+        # at most n_rows / kept_cells of them; a measured value has about n_rows.
+        axes = sorted((col for col in cols if 1 < n_values[col] <= n_rows / kept_cells), key=n_values.get)
+        for size in range(1, len(axes) + 1):
+            for combo in combinations(axes, size):
+                if n_cells(dims + list(combo)) == n_rows:
+                    return [name for name in names if name in combo]
+        return []
 
     def create_sql_expr_source(
         self,
