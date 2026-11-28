@@ -434,7 +434,7 @@ def test_hvplotuiview_uses_grid_explorer_for_gridded(simple_dataset_3d_pipeline)
 
 def test_hvplotview_slides_over_a_time_axis_the_sql_derived(simple_dataset_3d):
     """An answer whose SQL derives its time axis (CAST(time AS DATE) AS date)
-    gets a dataset with that axis as a dim, so it can page over it (gh-2443)."""
+    gets a dataset with that axis as a dim, so it can page over it."""
     source = XArraySQLSource(_dataset=simple_dataset_3d).create_sql_expr_source({
         "daily": "SELECT CAST(time AS DATE) AS date, lat, lon, air FROM air"
     })
