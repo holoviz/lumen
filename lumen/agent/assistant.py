@@ -232,6 +232,15 @@ _FLOWDASH_TOOL_NAMES = {tool.__name__ for tool in FLOWDASH_TOOLS}
 HAS_ARRANGE_TILES = "arrange_tiles" in _FLOWDASH_TOOL_NAMES
 # FlowDash releases before add_filter have no tool for the global filter bar.
 HAS_ADD_FILTER = "add_filter" in _FLOWDASH_TOOL_NAMES
+# FlowDash releases before run_pending have no tool to answer pending report questions.
+HAS_RUN_PENDING = "run_pending" in _FLOWDASH_TOOL_NAMES
+# FlowDash's run_pending tool tells the model to build the answer with add_node and connect,
+# which a Lumen agent replaces with its own data and authoring tools.
+RUN_PENDING_INSTRUCTIONS = """
+- When answering a pending report question after calling run_pending, build the answer
+  with Lumen's tools (add_sql, add_metric, add_analysis, add_chart, add_table, add_map)
+  rather than generic FlowDash nodes.
+"""
 # FlowDash's own set for an assistant that lays out a dashboard, with its report, title and filter
 # tools, where FlowDash has one.
 FLOWDASH_LAYOUT_TOOLS: tuple[str, ...] | None = getattr(_flowdash_tools, "LAYOUT_TOOLS", None)
@@ -433,6 +442,8 @@ def create_agent(model: Any = None, *, instructions: str | None = None, model_se
         text += SELECTION_INSTRUCTIONS + TABLE_INSTRUCTIONS
     if HAS_REPORT_HOOKS and (dashboard_tools is None or {"edit_report", "set_report"} & set(dashboard_tools)):
         text += REPORT_INSTRUCTIONS
+    if HAS_RUN_PENDING and (dashboard_tools is None or "run_pending" in dashboard_tools):
+        text += RUN_PENDING_INSTRUCTIONS
     if dashboard_tools is not None and "place_tile" in dashboard_tools:
         arrange = " arrange_tiles does that, keeping place_tile sizes." if "arrange_tiles" in dashboard_tools else ""
         filters = GLOBAL_FILTER if "add_filter" in dashboard_tools else LOCAL_FILTER

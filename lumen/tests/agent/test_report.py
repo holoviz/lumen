@@ -135,3 +135,62 @@ def test_layout_agent_gets_lumens_report_wording_with_report_hooks(monkeypatch):
     assert REPORT_INSTRUCTIONS not in data and REPORT_INSTRUCTIONS not in old
     has_report = "edit_report" in (assistant.FLOWDASH_LAYOUT_TOOLS or ())
     assert (REPORT_INSTRUCTIONS in layout) == (HAS_REPORT_HOOKS and has_report)
+
+
+def test_layout_agent_gets_run_pending_wording(monkeypatch):
+    given = []
+    monkeypatch.setattr(
+        assistant, "create_flowdash_agent",
+        lambda *args, **kwargs: given.append(kwargs["instructions"]) or assistant.Agent("test"),
+    )
+    has_run_pending = assistant.HAS_RUN_PENDING
+    assistant.create_agent("test")
+    assistant.create_explore_agent("test")
+    assistant.create_agent("test", dashboard_tools="layout")
+    assistant.create_agent("test", dashboard_tools=None)
+    monkeypatch.setattr(assistant, "HAS_RUN_PENDING", False)
+    assistant.create_agent("test", dashboard_tools="layout")
+    data, explore, layout, full, old = given
+    wording = assistant.RUN_PENDING_INSTRUCTIONS
+    assert "add_sql" in wording and "add_chart" in wording
+    assert wording not in data and wording not in explore and wording not in old
+    has_pending = "run_pending" in (assistant.FLOWDASH_LAYOUT_TOOLS or ())
+    assert (wording in layout) == (has_run_pending and has_pending)
+    assert (wording in full) == has_run_pending
+
+
+@pytest.mark.skipif(
+    not assistant.HAS_RUN_PENDING or "run_pending" not in assistant.DASHBOARD_TOOLS["layout"],
+    reason="panel-flowdash layout tools do not include run_pending",
+)
+async def test_layout_agent_answers_pending_report_question_with_lumen_tools():
+    from panel_flowdash.report import turn_outputs
+    from pydantic_ai.messages import ToolCallPart
+
+    seen_instructions: list[str] = []
+
+    def step(messages, info):
+        if messages and getattr(messages[0], "instructions", None):
+            seen_instructions.append(messages[0].instructions)
+        return ModelResponse(next(calls))
+
+    model = FunctionModel(step)
+    agent = assistant.create_agent(model, dashboard_tools="layout")
+    sess = AgentSession(DuckDBSource(uri=":memory:", tables=TABLES), model, agent=agent)
+    try:
+        turn_id = sess.ops.ask_in_report("What is paid revenue by region?")
+        calls = iter([
+            [ToolCallPart("run_pending", {"turn": turn_id})],
+            [ToolCallPart("add_sql", {"source": "data", "name": "paid_by_region", "sql": BY_REGION})],
+            [ToolCallPart("add_chart", {"data": "paid_by_region", "name": "paid_chart", "spec": BAR})],
+            [TextPart("Paid revenue is highest in the east region.")],
+        ])
+        result = await sess.ask(f"Answer pending question {turn_id}")
+        assert result.error is None
+        assert any(assistant.RUN_PENDING_INSTRUCTIONS.strip() in text for text in seen_instructions)
+        assert "paid_by_region" in result.nodes and "paid_chart" in result.nodes
+        pending = [t for t in sess.editor.turns if t.id == turn_id]
+        assert pending and pending[0].status != "pending"
+        assert turn_outputs(sess.editor, turn_id)
+    finally:
+        sess.close()

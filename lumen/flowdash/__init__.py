@@ -18,13 +18,14 @@ upload are read by the handlers of ``lumen.flowdash.uploads``.
 Importing ``lumen`` does not import this package or panel-flowdash.
 """
 from .access import (
-    attach_access, authorized_metrics, authorized_sources, authorized_tables,
-    can_access_metric, can_access_source, can_access_table,
+    attach_access, authorized_analyses, authorized_metrics, authorized_sources,
+    authorized_tables, can_access_analysis, can_access_metric,
+    can_access_source, can_access_table,
 )
 from .analysis import (
-    ANALYSES_KEY, ANALYSIS_ID, AnalysisNode, AnalysisResult, bind_analysis,
-    bound_analyses, check_analysis_config, host_analyses, missing_analysis,
-    run_analysis, unbind_analysis,
+    ANALYSES_ACCESS_KEY, ANALYSES_KEY, ANALYSIS_ID, AnalysisNode,
+    AnalysisResult, bind_analysis, bound_analyses, check_analysis_config,
+    host_analyses, missing_analysis, run_analysis, unbind_analysis,
 )
 from .catalog import (
     CATALOG_KEY, Catalog, ProjectCatalog, assistant_tables, hidden_tables,
@@ -78,6 +79,7 @@ __flowdash_components__ = COMPONENTS
 
 __all__ = [
     "AGGREGATE_ID",
+    "ANALYSES_ACCESS_KEY",
     "ANALYSES_KEY",
     "ANALYSIS_ID",
     "CATALOG_KEY",
@@ -136,6 +138,7 @@ __all__ = [
     "ViewNode",
     "assistant_tables",
     "attach_access",
+    "authorized_analyses",
     "authorized_metrics",
     "authorized_sources",
     "authorized_tables",
@@ -143,6 +146,7 @@ __all__ = [
     "bind_source",
     "bound_analyses",
     "bound_sources",
+    "can_access_analysis",
     "can_access_metric",
     "can_access_source",
     "can_access_table",

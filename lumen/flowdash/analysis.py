@@ -40,6 +40,10 @@ from panel_flowdash.util import is_failure
 from ..pipeline import Pipeline
 from ..sources.base import InMemorySource
 from ..util import as_pandas, get_dataframe_schema, is_narwhals
+from .access import (
+    access_denied_analysis, authorized_analyses, can_access_analysis,
+    parse_access_spec,
+)
 from .checks import CheckDiagnostic, pipeline_columns
 from .choices import palette_presets
 from .nodes import (
@@ -53,6 +57,7 @@ if TYPE_CHECKING:
 
 ANALYSIS_ID = "Lumen/analysis"
 ANALYSES_KEY = "lumen.analyses"
+ANALYSES_ACCESS_KEY = "lumen.analysis_access"
 
 logger = logging.getLogger(__name__)
 
@@ -123,17 +128,33 @@ def bound_analyses(editor: Any) -> dict[str, Any]:
     return host_analyses(editor.context)
 
 
-def bind_analysis(editor: Any, analysis: Any, name: str | None = None) -> str:
+def bind_analysis(
+    editor: Any,
+    analysis: Any,
+    name: str | None = None,
+    *,
+    access: Any = None,
+) -> str:
     """
     Let ``Lumen/analysis`` nodes of ``editor`` run ``analysis`` under ``name``
     (defaulting to ``analysis.name``), refreshing any existing nodes naming it.
+    Optional ``access`` accepts a ``Permission`` or an ``access:`` rule mapping.
     """
     if not _is_analysis(analysis):
         raise TypeError(f"Expected a Lumen Analysis subclass or instance, got {type(analysis).__name__}.")
+    perm = parse_access_spec(access) if access is not None else None
     key = name or _entry_name(analysis)
     existing = host_analyses(editor.context)
     existing[key] = analysis
     editor.context[ANALYSES_KEY] = existing
+    if perm is not None:
+        raw_rules = editor.context.get(ANALYSES_ACCESS_KEY)
+        rules = dict(raw_rules) if isinstance(raw_rules, Mapping) else {}
+        if perm.is_empty:
+            rules.pop(key, None)
+        else:
+            rules[key] = perm
+        editor.context[ANALYSES_ACCESS_KEY] = rules
     for node in list(_ANALYSIS_NODES.get(editor, ())):
         if node.analysis == key:
             node._refresh()
@@ -147,15 +168,22 @@ def unbind_analysis(editor: Any, name: str) -> None:
         return
     existing.pop(name, None)
     editor.context[ANALYSES_KEY] = existing
+    raw_rules = editor.context.get(ANALYSES_ACCESS_KEY)
+    if isinstance(raw_rules, Mapping) and name in raw_rules:
+        rules = dict(raw_rules)
+        rules.pop(name, None)
+        editor.context[ANALYSES_ACCESS_KEY] = rules
     for node in list(_ANALYSIS_NODES.get(editor, ())):
         if node.analysis == name:
             node._refresh()
 
 
-def missing_analysis(name: str, analyses: Mapping[str, Any]) -> str:
+def missing_analysis(name: str, analyses: Mapping[str, Any], *, restricted: bool = False) -> str:
     """What an analysis node reports when the host provides only ``analyses``."""
     if analyses:
         return f"The app defines no analysis `{name}`; its analyses are: {', '.join(f'`{a}`' for a in sorted(analyses))}."
+    if restricted:
+        return f"The app defines no analysis `{name}` available to this session."
     return 'The app provides no Lumen analyses. Pass `analyses=[...]` to `build_routes`, or set `editor_options = {"context": {"lumen.analyses": {...}}}`.'
 
 
@@ -412,16 +440,23 @@ def run_analysis(
 def check_analysis_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any:
     """
     Check a ``Lumen/analysis`` config without running the analysis: the named
-    analysis must be registered by the host, its parameters must be valid, and
-    any required ``columns`` must exist on the connected pipeline.
+    analysis must be registered by the host and permitted for the session, its
+    parameters must be valid, and any required ``columns`` must exist on the
+    connected pipeline.
     """
     name = config.get("analysis")
     if not name:
         return None
-    analyses = host_analyses()
+    context = dashboard_context()
+    analyses = host_analyses(context)
     entry = analyses.get(name)
+    if entry is not None and not can_access_analysis(name, context):
+        return CheckDiagnostic(access_denied_analysis(name), field="analysis")
     if entry is None:
-        return CheckDiagnostic(missing_analysis(name, analyses), field="analysis")
+        return CheckDiagnostic(
+            missing_analysis(name, authorized_analyses(context), restricted=bool(analyses)),
+            field="analysis",
+        )
     pipeline = inputs.get("pipeline")
     columns: list[str] | None = None
     if isinstance(pipeline, Pipeline) and not is_failure(pipeline):
@@ -442,15 +477,15 @@ def check_analysis_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any
 
 
 def analysis_choices(config: dict[str, Any], inputs: dict[str, Any]) -> dict[str, Any]:
-    """Offer the names of the analyses the host registered for a ``Lumen/analysis`` node."""
-    analyses = host_analyses()
+    """Offer the names of the analyses the host registered that the session may access."""
+    analyses = authorized_analyses(dashboard_context())
     return {"analysis": sorted(analyses)} if analyses else {}
 
 
 def analysis_presets(context: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """A ``Lumen/analysis`` palette entry per analysis the host provides."""
+    """A ``Lumen/analysis`` palette entry per analysis the session may access."""
     presets = []
-    for name, entry in host_analyses(context).items():
+    for name, entry in authorized_analyses(context).items():
         doc = analysis_doc(entry)
         first_line = doc.splitlines()[0].strip() if doc else f"Run the {name} analysis on a pipeline."
         cols = [str(c) for c in (getattr(entry, "columns", ()) or ())]
@@ -515,8 +550,12 @@ class AnalysisNode(GlobalFilterTarget, LumenNode):
             return None
         analyses = host_analyses(self._context)
         entry = analyses.get(self.analysis)
+        if entry is not None and not can_access_analysis(self.analysis, self._context):
+            raise PermissionError(access_denied_analysis(self.analysis))
         if entry is None:
-            raise ValueError(missing_analysis(self.analysis, analyses))
+            raise ValueError(
+                missing_analysis(self.analysis, authorized_analyses(self._context), restricted=bool(analyses))
+            )
         return run_analysis(
             entry,
             self.pipeline,
@@ -591,8 +630,12 @@ class AnalysisNode(GlobalFilterTarget, LumenNode):
             return cached[2]
         analyses = host_analyses(self._context)
         entry = analyses.get(self.analysis)
+        if entry is not None and not can_access_analysis(self.analysis, self._context):
+            raise PermissionError(access_denied_analysis(self.analysis))
         if entry is None:
-            raise ValueError(missing_analysis(self.analysis, analyses))
+            raise ValueError(
+                missing_analysis(self.analysis, authorized_analyses(self._context), restricted=bool(analyses))
+            )
         result = run_analysis(
             entry, self._shown(self.pipeline), self.params, name=self.analysis, limit=row_ceiling(self.editor),
         )

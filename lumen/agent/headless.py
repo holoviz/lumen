@@ -23,9 +23,10 @@ from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from pydantic_ai.models.wrapper import WrapperModel
 
 from ..flowdash import (
-    ANALYSES_KEY, COMPONENTS, METRICS_KEY, SOURCE_ID, SQL_ID, bind_source,
-    unbind_source,
+    ANALYSES_ACCESS_KEY, ANALYSES_KEY, COMPONENTS, METRICS_KEY, SOURCE_ID,
+    SQL_ID, bind_source, host_analyses, unbind_source,
 )
+from ..flowdash.access import parse_analysis_access
 from ..sources.base import Source
 from . import _graph
 from .assistant import create_agent
@@ -136,6 +137,13 @@ class AgentSession:
     metrics
         The app's metrics, e.g. ``read_metrics(load_project("flowdash.yaml"))``,
         over ``source`` by the source node's name.
+    analyses
+        Host-registered Lumen ``Analysis`` subclasses or instances (a mapping by
+        name or a sequence) available to ``Lumen/analysis`` nodes and the agent.
+    analysis_access
+        Optional per-analysis ``access:`` rules mapping an analysis name to a
+        ``Permission`` or rule dict. Unknown keys log a warning and are ignored;
+        registered analyses without rules remain open.
     approve
         Decides the tool calls FlowDash's approval policy holds back, e.g.
         saving the dashboard, from the tool name and
@@ -147,6 +155,7 @@ class AgentSession:
                  model_settings: dict[str, Any] | None = None,
                  trace: str | os.PathLike | None = None, metrics: Mapping[str, Any] | None = None,
                  analyses: Mapping[str, Any] | Sequence[Any] | None = None,
+                 analysis_access: Mapping[str, Any] | None = None,
                  approve: Callable[[str, dict[str, Any]], bool] | None = None):
         self.source = source
         self.model = Meter(streamable(model))
@@ -158,6 +167,10 @@ class AgentSession:
             self.editor.context[METRICS_KEY] = metrics
         if analyses:
             self.editor.context[ANALYSES_KEY] = analyses
+        if analysis_access is not None:
+            self.editor.context[ANALYSES_ACCESS_KEY] = parse_analysis_access(
+                analysis_access, known=host_analyses(self.editor.context),
+            )
         self.ops.add_node(SOURCE_ID, {"ref": self.source_node}, name=self.source_node)
         if agent is None:
             agent = create_agent(self.model, instructions=instructions or None, model_settings=model_settings)

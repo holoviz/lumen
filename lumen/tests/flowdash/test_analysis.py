@@ -447,3 +447,202 @@ def test_unbinding_an_analysis_refreshes_the_nodes_naming_it(duck):
         assert node._object is None and "no Lumen analyses" in node._error
     finally:
         editor.dispose()
+
+
+def test_analysis_access_choices_presets_and_config_check(duck):
+    import weakref
+
+    from panel_flowdash.auth import Identity
+    from panel_flowdash.editor import _current
+
+    from lumen.flowdash import (
+        ANALYSES_ACCESS_KEY, authorized_analyses, can_access_analysis,
+    )
+    from lumen.flowdash.access import bind_identity
+
+    sales_user = Identity("sam", groups=frozenset({"sales"}))
+    rules = {"ScaleAmount": {"allow_groups": ["hr"], "deny_users": ["blocked"]}}
+    editor = FlowDash(
+        components=COMPONENTS,
+        notifications=False,
+        context={ANALYSES_KEY: [ScaleAmount, SummaryView], ANALYSES_ACCESS_KEY: rules},
+    )
+    bind_source(editor, duck, "data")
+    bind_identity(editor, sales_user)
+    try:
+        ops = DashboardOps(editor)
+        assert not can_access_analysis("ScaleAmount", editor.context)
+        assert can_access_analysis("SummaryView", editor.context)
+        assert set(authorized_analyses(editor.context)) == {"SummaryView"}
+
+        with _current(weakref.ref(editor)):
+            assert analysis_choices({}, {}) == {"analysis": ["SummaryView"]}
+            assert [p["config"]["analysis"] for p in analysis_presets(editor.context)] == ["SummaryView"]
+            diag = check_analysis_config({"analysis": "ScaleAmount"}, {})
+            assert diag is not None and "permission" in str(diag).lower()
+            missing = check_analysis_config({"analysis": "DoesNotExist"}, {})
+            assert missing is not None and "ScaleAmount" not in str(missing) and "SummaryView" in str(missing)
+
+        with pytest.raises(OperationError, match="permission"):
+            ops.add_node(ANALYSIS_ID, {"analysis": "ScaleAmount"}, name="nope")
+
+        # When every registered analysis is restricted, missing_analysis avoids host-setup advice.
+        editor.context[ANALYSES_ACCESS_KEY] = {
+            "ScaleAmount": {"allow_groups": ["hr"]},
+            "SummaryView": {"allow_groups": ["hr"]},
+        }
+        with _current(weakref.ref(editor)):
+            all_hidden = check_analysis_config({"analysis": "DoesNotExist"}, {})
+            assert all_hidden is not None
+            assert "available to this session" in str(all_hidden)
+            assert "build_routes" not in str(all_hidden)
+    finally:
+        editor.dispose()
+
+
+def test_analysis_access_saved_dashboard_fails_closed(duck):
+    from panel_flowdash.auth import Identity
+
+    from lumen.flowdash import ANALYSES_ACCESS_KEY
+    from lumen.flowdash.access import bind_identity
+
+    sales_user = Identity("sam", groups=frozenset({"sales"}))
+    admin = Identity("root", groups=frozenset({"admins"}))
+    rules = {"ScaleAmount": {"allow_groups": ["hr"]}}
+
+    author = FlowDash(
+        components=COMPONENTS,
+        notifications=False,
+        context={ANALYSES_KEY: [ScaleAmount, SummaryView], ANALYSES_ACCESS_KEY: rules},
+    )
+    bind_source(author, duck, "data")
+    bind_identity(author, admin, admin=True)
+    try:
+        a_ops = DashboardOps(author)
+        a_ops.add_node(TABLE_ID, {"ref": "data", "table": "sales"}, name="sales")
+        a_ops.add_node(ANALYSIS_ID, {"analysis": "ScaleAmount"}, name="restricted")
+        a_ops.connect("sales.pipeline", "restricted.pipeline")
+        a_ops.add_node(ANALYSIS_ID, {"analysis": "SummaryView"}, name="public")
+        a_ops.connect("sales.pipeline", "public.pipeline")
+        saved = author.export_dashboard()
+    finally:
+        author.dispose()
+
+    viewer = FlowDash(
+        components=COMPONENTS,
+        notifications=False,
+        context={ANALYSES_KEY: [ScaleAmount, SummaryView], ANALYSES_ACCESS_KEY: rules},
+    )
+    bind_source(viewer, duck, "data")
+    bind_identity(viewer, sales_user)
+    try:
+        ops = DashboardOps(viewer)
+        viewer.import_dashboard(saved)
+        nodes = ops.preview()["nodes"]
+        assert nodes["public"]["status"] == "ok"
+        assert nodes["restricted"]["status"] in ("invalid", "failed")
+        assert "permission" in nodes["restricted"]["message"].lower()
+    finally:
+        viewer.dispose()
+
+
+def test_analysis_access_precedence_malformed_and_exact_keys():
+    from panel_flowdash.auth import Identity
+
+    from lumen.flowdash import ANALYSES_ACCESS_KEY, can_access_analysis
+    from lumen.flowdash.access import parse_analysis_access
+
+    hr_user = Identity("alice", groups=frozenset({"hr"}))
+    denied_admin = Identity("blocked", groups=frozenset({"admins", "hr"}))
+    admin = Identity("root", groups=frozenset({"admins"}))
+
+    ctx = {
+        ANALYSES_KEY: [ScaleAmount, SummaryView],
+        ANALYSES_ACCESS_KEY: {"ScaleAmount": {"allow_groups": ["hr"], "deny_users": ["blocked"]}},
+    }
+    assert can_access_analysis("ScaleAmount", ctx, identity=hr_user)
+    assert can_access_analysis("ScaleAmount", ctx, identity=admin, admin=True)
+    assert not can_access_analysis("ScaleAmount", ctx, identity=denied_admin, admin=True)
+    assert not can_access_analysis("ScaleAmount", ctx, identity=None, admin=True)
+    assert can_access_analysis("SummaryView", ctx, identity=None)
+
+    # Malformed raw context rules fail closed to admins-only.
+    bad_ctx = {ANALYSES_KEY: [ScaleAmount], ANALYSES_ACCESS_KEY: {"ScaleAmount": {"allow_roles": ["hr"]}}}
+    assert not can_access_analysis("ScaleAmount", bad_ctx, identity=hr_user)
+    assert can_access_analysis("ScaleAmount", bad_ctx, identity=admin, admin=True)
+
+    # Keys are matched verbatim without stripping, avoiding lookup mismatches.
+    padded_rules = parse_analysis_access({" ScaleAmount": {"allow_groups": ["hr"]}})
+    assert " ScaleAmount" in padded_rules and "ScaleAmount" not in padded_rules
+    padded_ctx = {ANALYSES_KEY: {" ScaleAmount": ScaleAmount}, ANALYSES_ACCESS_KEY: padded_rules}
+    assert not can_access_analysis(" ScaleAmount", padded_ctx, identity=Identity("sam"))
+    assert can_access_analysis(" ScaleAmount", padded_ctx, identity=hr_user)
+
+
+def test_bind_and_unbind_analysis_access(duck):
+    from panel_flowdash.auth import Identity, Permission
+
+    from lumen.flowdash import ANALYSES_ACCESS_KEY, can_access_analysis
+    from lumen.flowdash.access import bind_identity
+
+    sales_user = Identity("sam", groups=frozenset({"sales"}))
+    editor, ops = _setup(duck, [])
+    bind_identity(editor, sales_user)
+    try:
+        with pytest.raises(ValueError, match="Unknown key 'bad_key'"):
+            bind_analysis(editor, ScaleAmount, access={"bad_key": ["hr"]})
+        bind_analysis(editor, ScaleAmount, access=Permission.from_spec(allow_groups=["hr"]))
+        assert not can_access_analysis("ScaleAmount", editor.context)
+        bind_analysis(editor, ScaleAmount, access={"allow_groups": ["sales"]})
+        assert can_access_analysis("ScaleAmount", editor.context)
+        ops.add_node(ANALYSIS_ID, {"analysis": "ScaleAmount"}, name="bound")
+        ops.connect("sales.pipeline", "bound.pipeline")
+        assert _component(ops, "bound")._error is None
+        bind_analysis(editor, ScaleAmount, access={"allow_groups": ["hr"]})
+        assert "permission" in (_component(ops, "bound")._error or "").lower()
+        unbind_analysis(editor, "ScaleAmount")
+        assert "ScaleAmount" not in editor.context[ANALYSES_ACCESS_KEY]
+    finally:
+        editor.dispose()
+
+
+def test_build_routes_analysis_access_and_unknown_key_warning(tmp_path, caplog):
+    import logging
+
+    from panel_flowdash.auth import Identity, Permission
+
+    from lumen.flowdash import ANALYSES_ACCESS_KEY, can_access_analysis
+
+    hr_user = Identity("alice", groups=frozenset({"hr"}))
+    sales_user = Identity("sam", groups=frozenset({"sales"}))
+
+    csv = tmp_path / "sales.csv"
+    csv.write_text("category,amount\nA,10\nB,20\n")
+    with pytest.raises(ValueError, match="Invalid access rule for analysis 'ScaleAmount'"):
+        build_routes(
+            [str(csv)],
+            db_path=tmp_path / "bad.db",
+            analyses=[ScaleAmount],
+            analysis_access={"ScaleAmount": {"unknown": ["hr"]}},
+        )
+
+    with caplog.at_level(logging.WARNING, logger="lumen.flowdash.access"):
+        routes = build_routes(
+            [str(csv)],
+            db_path=tmp_path / "ok.db",
+            analyses=[ScaleAmount, SummaryView],
+            analysis_access={
+                "ScaleAmount": {"allow_groups": ["hr"]},
+                "ScaleAmont": {"allow_groups": ["hr"]},
+            },
+        )
+    assert any("ScaleAmont" in rec.getMessage() for rec in caplog.records)
+    app = routes["/"]()
+    try:
+        stored = app._editor.context[ANALYSES_ACCESS_KEY]
+        assert stored == {"ScaleAmount": Permission.from_spec(allow_groups=["hr"])}
+        assert not can_access_analysis("ScaleAmount", app._editor.context, identity=sales_user)
+        assert can_access_analysis("ScaleAmount", app._editor.context, identity=hr_user)
+        assert can_access_analysis("SummaryView", app._editor.context, identity=sales_user)
+    finally:
+        app._editor.dispose()
