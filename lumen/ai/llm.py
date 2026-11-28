@@ -4563,10 +4563,6 @@ class Kilo(OpenAI):
 
     api_key_env_var: str = PROVIDER_ENV_VARS["kilo"]
 
-    mode = param.Selector(default=Mode.MD_JSON, objects=BASE_MODES, doc="""
-        JSON is asked for in plain text, because some free models drop every
-        newline from the string arguments of a tool call.""")
-
     display_name = param.String(
         default="Kilo",
         constant=True,
@@ -4588,6 +4584,13 @@ class Kilo(OpenAI):
         "kilo-auto/efficient",
         "kilo-auto/frontier",
     ], constant=True, doc="Available Kilo models for selection dropdowns.")
+
+    def __init__(self, **params):
+        super().__init__(**params)
+        # Some free models drop every newline from the string arguments of a
+        # tool call, so the keyless free tier asks for JSON in plain text
+        if "mode" not in params and self.api_key == "anonymous":
+            self.mode = Mode.MD_JSON
 
     def models(self) -> set[str]:
         """Return the set of available model identifiers from Kilo."""
