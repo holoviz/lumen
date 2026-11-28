@@ -111,19 +111,26 @@ mcp:
 
 
 def test_viewer_sees_read_only_integrations_with_access_filtering(page, tmp_path, monkeypatch):
-    from panel_flowdash.mcp import MCP_CHECKS, MCPServerCheck, MCPToolInfo
+    from panel_flowdash.mcp import (
+        MCPServerCheck, MCPToolInfo, clear_mcp_check, set_mcp_check,
+    )
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / "turbines.csv").write_text("p_name,p_cap\nAlta,6.0\n")
     project_path = tmp_path / PROJECT_FILE
     project_path.write_text(VIEWER_PROJECT)
-    MCP_CHECKS["public_docs"] = MCPServerCheck(
-        True,
-        "Connected (2 tools)",
-        tools=(
-            MCPToolInfo("search_docs", "Search public docs"),
-            MCPToolInfo("admin_reindex", "Reindex corpus"),
+    project_key = str(project_path.resolve())
+    set_mcp_check(
+        "public_docs",
+        MCPServerCheck(
+            True,
+            "Connected (2 tools)",
+            tools=(
+                MCPToolInfo("search_docs", "Search public docs"),
+                MCPToolInfo("admin_reindex", "Reindex corpus"),
+            ),
         ),
+        project_key=project_key,
     )
     try:
         routes = build_routes(
@@ -148,4 +155,4 @@ def test_viewer_sees_read_only_integrations_with_access_filtering(page, tmp_path
         expect(page.locator(".flowdash-mcp-card-finance_only")).to_have_count(0)
         expect(page.locator(".flowdash-mcp-card-disabled_srv")).to_have_count(0)
     finally:
-        MCP_CHECKS.pop("public_docs", None)
+        clear_mcp_check("public_docs", project_key=project_key)
