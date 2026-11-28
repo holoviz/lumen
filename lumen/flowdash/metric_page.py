@@ -27,7 +27,9 @@ from panel_flowdash.admin.kit import (
 from panel_flowdash.project import Problem, ProjectError
 
 from .access import effective_metric_access
-from .access_editor import ACCESS_CSS, AccessRuleEditor, effective_access_html
+from .access_editor import (
+    ACCESS_CSS, build_access_editor, effective_access_html, load_access_editor,
+)
 from .metrics_edit import (
     NOT_ADMIN_ACCESS, PREVIEW_ROWS, PREVIEW_TIMEOUT, UNSET, set_metric_access,
 )
@@ -184,19 +186,22 @@ class MetricPage(Viewer):
         self._access_base: t.Any = UNSET
         if self.admin:
             self._access_summary: t.Any = cell("", stylesheets=[ACCESS_CSS], css_classes=["lumen-metric-access-text"])
-            self._access_btn: t.Any = pmui.Button(
-                label="Edit access", icon="lock_open", variant="text", size="small", margin=0,
-                sx={"textTransform": "none", "minWidth": 0}, css_classes=["lumen-metric-access-edit"],
-            )
-            self._access_btn.on_click(lambda _event: self.open_access_editor())
-            self._access_editor: t.Any = AccessRuleEditor(
+            self._access_editor: t.Any = build_access_editor(
                 title=f"Access rules for {status.name}", framed=True, app=self.app, project=self.project,
                 on_save=self._save_access, on_cancel=self.close_access_editor,
             )
-            self._access_panel: t.Any = pn.Column(
-                self._access_editor, margin=(4, 0, 4, 0), sizing_mode="stretch_width", visible=False,
-                css_classes=["lumen-metric-access-editor"],
-            )
+            if self._access_editor is not None:
+                self._access_btn: t.Any = pmui.Button(
+                    label="Edit access", icon="lock_open", variant="text", size="small", margin=0,
+                    sx={"textTransform": "none", "minWidth": 0}, css_classes=["lumen-metric-access-edit"],
+                )
+                self._access_btn.on_click(lambda _event: self.open_access_editor())
+                self._access_panel: t.Any = pn.Column(
+                    self._access_editor, margin=(4, 0, 4, 0), sizing_mode="stretch_width", visible=False,
+                    css_classes=["lumen-metric-access-editor"],
+                )
+            else:
+                self._access_btn = self._access_panel = None
             self._render_access()
         else:
             self._access_summary = self._access_btn = self._access_editor = self._access_panel = None
@@ -337,8 +342,10 @@ class MetricPage(Viewer):
             names = ", ".join(hidden)
             rows.append(self._fact("Assistant", caption(
                 f"Leaves this metric out: {names} {'is' if len(hidden) == 1 else 'are'} turned off for the assistant.")))
-        if self.admin and self._access_summary is not None and self._access_btn is not None:
-            access_row = self._fact("Access", self._access_summary, self._access_btn)
+        if self.admin and self._access_summary is not None:
+            access_row = self._fact(
+                "Access", self._access_summary, *([self._access_btn] if self._access_btn is not None else []),
+            )
             access_row.css_classes = ["lumen-metric-access-row"]
             rows.append(access_row)
         return pn.Column(*rows, margin=(4, 0, 4, 0), sizing_mode="stretch_width", styles={"gap": "4px"},
@@ -362,11 +369,12 @@ class MetricPage(Viewer):
         return effective_metric_access(target, self.context, section=catalog_section)
 
     def _render_access(self) -> None:
-        if not self.admin or self._access_summary is None or self._access_btn is None:
+        if not self.admin or self._access_summary is None:
             return
         effective = self._effective_access()
         self._access_summary.object = effective_access_html(effective, compact=True)
-        self._access_btn.icon = "lock" if not effective.is_empty else "lock_open"
+        if self._access_btn is not None:
+            self._access_btn.icon = "lock" if not effective.is_empty else "lock_open"
 
     def open_access_editor(self) -> bool:
         """Open the inline access rules editor for this metric (admins only)."""
@@ -383,8 +391,9 @@ class MetricPage(Viewer):
         if isinstance(entry, dict):
             self._access_base = copy.deepcopy(entry.get("access"))
         effective = self._effective_access()
-        self._access_editor.load(
-            effective, title=f"Access rules for {self.status.name}", app=self.app, project=self.project,
+        load_access_editor(
+            self._access_editor, effective, title=f"Access rules for {self.status.name}",
+            app=self.app, project=self.project,
         )
         self._access_panel.visible = True
         return True

@@ -19,6 +19,7 @@ from playwright.sync_api import expect
 from lumen.flowdash import (
     CATALOG_KEY, METRICS_KEY, SOURCES_KEY, ProjectCatalog,
 )
+from lumen.flowdash.access_editor import permission_editor_supported
 from lumen.flowdash.catalog import raw_section as raw_catalog
 from lumen.flowdash.data_section import DataPage
 from lumen.flowdash.metrics import ProjectMetrics
@@ -28,6 +29,11 @@ from lumen.flowdash.uploads import UPLOADS_KEY, Uploads
 from lumen.sources.duckdb import DuckDBSource
 
 pytestmark = pytest.mark.filterwarnings("ignore:reference already known")
+
+needs_permission_editor = pytest.mark.skipif(
+    not permission_editor_supported(),
+    reason="requires panel_flowdash.admin.permission_editor (panel-extensions/panel-flowdash#312)",
+)
 
 PROJECT_YAML = """\
 general:
@@ -113,6 +119,7 @@ def _make_project(tmp_path, yaml_text: str = PROJECT_YAML):
     return project
 
 
+@needs_permission_editor
 def test_admin_edits_source_table_and_metric_access_rules(page, tmp_path):
     project = _make_project(tmp_path)
     session = _Session(project, admin=True, user="ana", groups=("admins",))
@@ -129,18 +136,18 @@ def test_admin_edits_source_table_and_metric_access_rules(page, tmp_path):
 
     dialog = page.locator(".lumen-access-dialog")
     expect(dialog).to_be_visible(timeout=15000)
-    expect(dialog.locator(".lumen-access-effective")).to_contain_text("Open")
+    expect(dialog.locator(".flowdash-permission-effective")).to_contain_text("Open")
 
-    deny_users = dialog.locator(".lumen-access-deny-users input").first
+    deny_users = dialog.locator(".flowdash-permission-deny-users input").first
     deny_users.fill("ana")
-    expect(dialog.locator(".lumen-access-lockout-warning")).to_contain_text("lock you out", timeout=10000)
-    dialog.locator(".lumen-access-save button").click()
-    expect(dialog.locator(".lumen-access-error")).to_contain_text("lock you out", timeout=10000)
+    expect(dialog.locator(".flowdash-permission-lockout-warning")).to_contain_text("lock you out", timeout=10000)
+    dialog.locator(".flowdash-permission-save button").click()
+    expect(dialog.locator(".flowdash-permission-error")).to_contain_text("lock you out", timeout=10000)
     assert raw_catalog(project) == {}
 
     deny_users.fill("")
-    dialog.locator(".lumen-access-allow-groups input").first.fill("hr, finance")
-    dialog.locator(".lumen-access-save button").click()
+    dialog.locator(".flowdash-permission-allow-groups input").first.fill("hr, finance")
+    dialog.locator(".flowdash-permission-save button").click()
     expect(dialog).to_be_hidden(timeout=15000)
     expect(card).to_contain_text("Access: Allow groups finance, hr", timeout=15000)
     assert raw_catalog(project)["shop"]["access"] == {"allow_groups": ["finance", "hr"]}
@@ -158,9 +165,9 @@ def test_admin_edits_source_table_and_metric_access_rules(page, tmp_path):
     drawer.locator(".flowdash-catalog-access button").click()
     table_editor = drawer.locator(".flowdash-catalog-access-editor")
     expect(table_editor).to_be_visible(timeout=15000)
-    table_editor.locator(".lumen-access-allow-groups input").first.fill("hr")
-    table_editor.locator(".lumen-access-deny-users input").first.fill("contractor")
-    table_editor.locator(".lumen-access-save button").click()
+    table_editor.locator(".flowdash-permission-allow-groups input").first.fill("hr")
+    table_editor.locator(".flowdash-permission-deny-users input").first.fill("contractor")
+    table_editor.locator(".flowdash-permission-save button").click()
     expect(table_editor).to_be_hidden(timeout=15000)
 
     expect(drawer.locator(".flowdash-catalog-access-summary")).to_contain_text("Restricted (own + inherited)", timeout=15000)
@@ -181,14 +188,14 @@ def test_admin_edits_source_table_and_metric_access_rules(page, tmp_path):
     page.locator(".lumen-metric-access-edit button").click()
     metric_editor = page.locator(".lumen-metric-access-editor")
     expect(metric_editor).to_be_visible(timeout=15000)
-    metric_editor.locator(".lumen-access-deny-groups input").first.fill("admins")
-    metric_editor.locator(".lumen-access-save button").click()
-    expect(metric_editor.locator(".lumen-access-error")).to_contain_text("lock you out", timeout=10000)
+    metric_editor.locator(".flowdash-permission-deny-groups input").first.fill("admins")
+    metric_editor.locator(".flowdash-permission-save button").click()
+    expect(metric_editor.locator(".flowdash-permission-error")).to_contain_text("lock you out", timeout=10000)
     assert "access" not in raw_metrics(project)["payroll"]
 
-    metric_editor.locator(".lumen-access-deny-groups input").first.fill("")
-    metric_editor.locator(".lumen-access-deny-users input").first.fill("intern")
-    metric_editor.locator(".lumen-access-save button").click()
+    metric_editor.locator(".flowdash-permission-deny-groups input").first.fill("")
+    metric_editor.locator(".flowdash-permission-deny-users input").first.fill("intern")
+    metric_editor.locator(".flowdash-permission-save button").click()
     expect(metric_editor).to_be_hidden(timeout=15000)
 
     expect(access_row).to_contain_text("Deny user intern", timeout=15000)

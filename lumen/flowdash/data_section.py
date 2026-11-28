@@ -298,14 +298,14 @@ class DataPage(Viewer):
     # Tables
 
     def _tables_page(self, query: dict[str, str]) -> pn.Column:
-        from .access_editor import AccessRuleDialog
+        from .access_editor import build_access_dialog
         from .catalog_admin import CatalogSettings
 
         self.catalog = CatalogSettings(
             self.project, editable=self.admin, app=self.app, show_add=False,
             on_select=self._on_table, on_open=self.navigate, on_change=lambda: self.navigate(f"/{ROUTE}"),
         )
-        self._access_dialog = AccessRuleDialog(app=self.app, project=self.project) if self.admin else None
+        self._access_dialog = build_access_dialog(app=self.app, project=self.project) if self.admin else None
         add = pmui.Button(
             label="Add data", icon="add", variant="contained", margin=0, visible=self.catalog.may_add(),
             css_classes=["lumen-data-add"],
@@ -403,7 +403,7 @@ class DataPage(Viewer):
             open_it = pmui.Clickable(object=body, sizing_mode="stretch_width", margin=0)
             open_it.on_click(lambda *_args, ref=summary.ref: self.navigate(f"/{ROUTE}?source={quote(ref, safe='')}"))
             parts: list[t.Any] = [open_it]
-            if self.admin:
+            if self.admin and getattr(self, "_access_dialog", None) is not None:
                 restricted = effective is not None and not effective.is_empty
                 access_btn = pmui.IconButton(
                     icon="lock" if restricted else "lock_open", size="small", margin=0,
@@ -461,6 +461,7 @@ class DataPage(Viewer):
         from panel_flowdash.project import ProjectError
 
         from .access import effective_source_access
+        from .access_editor import open_access_dialog
         from .catalog import raw_section, set_source_access
 
         if not self.admin or getattr(self, "_access_dialog", None) is None:
@@ -483,7 +484,7 @@ class DataPage(Viewer):
                     self.app._notify("success", f"Saved access rules for {ref}.")
             return problems
 
-        self._access_dialog.open(f"Access rules: {ref}", effective, on_save, app=self.app, project=self.project)
+        open_access_dialog(self._access_dialog, f"Access rules: {ref}", effective, on_save, app=self.app, project=self.project)
         return True
 
     def refresh_source(self, ref: str) -> None:

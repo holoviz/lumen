@@ -36,7 +36,9 @@ from panel_flowdash.value_text import error_text
 
 from ..sources.base import Source
 from .access import effective_table_access
-from .access_editor import ACCESS_CSS, AccessRuleEditor, effective_access_html
+from .access_editor import (
+    ACCESS_CSS, build_access_editor, effective_access_html, load_access_editor,
+)
 from .add_data import AddDataDialog
 from .catalog import (
     NOT_ADMIN_ACCESS, ColumnInfo, TableDetail, TableInfo, catalog_tables,
@@ -736,9 +738,17 @@ class CatalogSettings(Viewer):
             visible=self.editable, css_classes=["flowdash-catalog-edit-descriptions"],
         )
         self._edit_desc_btn.on_click(lambda _event: self.open_descriptions_editor())
+        self._access_editor = (
+            build_access_editor(
+                title="Table access rules", framed=True, app=self._app, project=self.project,
+                on_save=self._save_table_access, on_cancel=self.close_access_editor,
+            )
+            if self.editable
+            else None
+        )
         self._access_btn = pmui.Button(
             label="Access", icon="lock_open", variant="outlined", size="small", margin=0,
-            visible=self.editable, css_classes=["flowdash-catalog-access"],
+            visible=self.editable and self._access_editor is not None, css_classes=["flowdash-catalog-access"],
         )
         self._access_btn.on_click(lambda _event: self.open_access_editor())
         self._drawer_actions = pn.Row(
@@ -760,12 +770,9 @@ class CatalogSettings(Viewer):
             styles={"gap": "16px", "align-items": "flex-start"},
             css_classes=["flowdash-catalog-access-summary"],
         )
-        self._access_editor = AccessRuleEditor(
-            title="Table access rules", framed=True, app=self._app, project=self.project,
-            on_save=self._save_table_access, on_cancel=self.close_access_editor,
-        )
         self._access_panel = pn.Column(
-            self._access_editor, margin=0, sizing_mode="stretch_width", visible=False,
+            *([self._access_editor] if self._access_editor is not None else []),
+            margin=0, sizing_mode="stretch_width", visible=False,
             css_classes=["flowdash-catalog-access-editor"],
         )
         self._first_rows = pmui.Card(
@@ -1072,21 +1079,24 @@ class CatalogSettings(Viewer):
 
     def open_access_editor(self) -> bool:
         """Open the inline access rules editor for the selected table (admins only)."""
-        if not self.editable or self.selected is None:
+        if not self.editable or self.selected is None or self._access_editor is None:
             return False
         ref, table = self.selected
         row = self._row(ref, table)
         if row is None:
             return False
         effective = effective_table_access(ref, row["source"], table, self.project.context or {}, section=self.section())
-        self._access_editor.load(effective, title=f"Access rules for {table}", app=self._app, project=self.project)
+        load_access_editor(
+            self._access_editor, effective, title=f"Access rules for {table}", app=self._app, project=self.project,
+        )
         self._access_panel.visible = True
         return True
 
     def close_access_editor(self) -> None:
         """Close the inline access rules editor without saving."""
         self._access_panel.visible = False
-        self._access_editor.show_problems([])
+        if self._access_editor is not None:
+            self._access_editor.show_problems([])
 
     def _save_table_access(self, perm: t.Any) -> list[Problem]:
         if not self.editable or self.selected is None:
@@ -1265,7 +1275,9 @@ class CatalogSettings(Viewer):
             effective = effective_table_access(ref, source, table, self.project.context or {}, section=self.section())
             self._access_summary.object = effective_access_html(effective, compact=True)
             self._access_row.visible = True
-            self._access_btn.param.update(visible=True, icon="lock" if not effective.is_empty else "lock_open")
+            self._access_btn.param.update(
+                visible=self._access_editor is not None, icon="lock" if not effective.is_empty else "lock_open",
+            )
         else:
             self._access_row.visible = False
             self._access_btn.visible = False

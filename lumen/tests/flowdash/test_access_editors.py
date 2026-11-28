@@ -20,7 +20,13 @@ from lumen.flowdash.access import (
     effective_table_access, lockout_reason, normalize_access,
 )
 from lumen.flowdash.access_editor import (
-    AccessRuleEditor, effective_access_html, known_principals, parse_name_list,
+    build_access_editor, effective_access_html, load_access_editor,
+    permission_editor_supported,
+)
+
+needs_permission_editor = pytest.mark.skipif(
+    not permission_editor_supported(),
+    reason="requires panel_flowdash.admin.permission_editor (panel-extensions/panel-flowdash#312)",
 )
 from lumen.flowdash.catalog import (
     NOT_ADMIN_ACCESS, raw_section as raw_catalog, set_assistant,
@@ -185,8 +191,6 @@ def test_access_helpers_and_lockout_checks():
     assert "denies your group ('admins')" in (lockout_reason(Permission.from_spec(deny_groups=["admins"]), admin_id) or "")
     # Non-empty rule with no session identity fails closed.
     assert "no identity" in (lockout_reason(Permission.from_spec(allow_groups=["hr"]), None) or "")
-
-    assert parse_name_list(" hr, finance ,\nhr , ") == ["hr", "finance"]
 
 
 def _effective_allows(effective: EffectiveAccess, identity: Identity | None, *, admin: bool = False) -> bool:
@@ -390,22 +394,21 @@ def test_set_metric_access_and_save_metric_lockout(tmp_path):
 # UI components (headless): DataPage, CatalogSettings drawer, MetricPage
 
 
-def test_access_rule_editor_live_preview_and_known_principals(tmp_path):
+@needs_permission_editor
+def test_access_rule_editor_live_preview_and_lockout(tmp_path):
     project, _ = _make_project(tmp_path)
     admin = FakeSession(project, user="ana", groups=("admins",), admin=True)
-    users, groups = known_principals(admin, project)
-    assert {"alice", "ana", "bob"} <= set(users)
-    assert {"admins", "finance", "hr"} <= set(groups)
 
     saved: list[Permission] = []
-    editor = AccessRuleEditor(app=admin, project=project, on_save=lambda perm: (saved.append(perm), [])[1])
+    editor = build_access_editor(app=admin, project=project, on_save=lambda perm: (saved.append(perm), [])[1])
+    assert editor is not None
     inherited = (InheritedRule("Source 'hr'", Permission.from_spec(allow_groups=["hr", "finance"])),)
-    editor.load(EffectiveAccess(own=Permission(), inherited=inherited))
-    assert "Inherited from Source &#x27;hr&#x27;" in editor._effective_view.object
+    load_access_editor(editor, EffectiveAccess(own=Permission(), inherited=inherited), app=admin, project=project)
+    assert "Inherited from Source &#x27;hr&#x27;" in editor._effective_cell.object
     assert not editor._lockout_warn.visible
 
     # Typing own username in deny_users triggers immediate lockout warning.
-    editor._deny_users.value = "ana"
+    editor.deny_users_input.value = "ana"
     assert editor._lockout_warn.visible and "lock you out" in editor._lockout_warn.object
 
     # Clear removes warning and resets all fields.
@@ -413,12 +416,13 @@ def test_access_rule_editor_live_preview_and_known_principals(tmp_path):
     assert not editor._lockout_warn.visible
     assert editor.permission().is_empty
 
-    editor._allow_groups.value = "hr"
-    assert "Allow group hr" in editor._effective_view.object
+    editor.allow_groups_input.value = "hr"
+    assert "Allow group hr" in editor._effective_cell.object
     assert editor.save()
     assert saved == [Permission.from_spec(allow_groups=["hr"])]
 
 
+@needs_permission_editor
 def test_source_card_and_table_drawer_access_editors_admin_vs_viewer(tmp_path):
     project, _ = _make_project(tmp_path)
 
@@ -431,14 +435,14 @@ def test_source_card_and_table_drawer_access_editors_admin_vs_viewer(tmp_path):
     assert admin_view.edit_source_access("hr")
     assert admin_view._access_dialog.is_open
     # Refuses lockout and stays open with error alert.
-    admin_view._access_dialog.editor._deny_users.value = "ana"
+    admin_view._access_dialog.editor.deny_users_input.value = "ana"
     assert not admin_view._access_dialog.editor.save()
     assert admin_view._access_dialog.is_open
     assert admin_view._access_dialog.editor._alert.visible
 
     # Valid edit closes dialog and updates flowdash.yaml & card text.
-    admin_view._access_dialog.editor._deny_users.value = "guest"
-    admin_view._access_dialog.editor._allow_groups.value = "hr"
+    admin_view._access_dialog.editor.deny_users_input.value = "guest"
+    admin_view._access_dialog.editor.allow_groups_input.value = "hr"
     assert admin_view._access_dialog.editor.save()
     assert not admin_view._access_dialog.is_open
     assert raw_catalog(project)["hr"]["access"] == {"allow_groups": ["hr"], "deny_users": ["guest"]}
@@ -454,7 +458,7 @@ def test_source_card_and_table_drawer_access_editors_admin_vs_viewer(tmp_path):
     assert catalog._access_panel.visible
     # Live admin revocation refuses save from the drawer too.
     admin_session.admin = False
-    catalog._access_editor._allow_users.value = "alice"
+    catalog._access_editor.allow_users_input.value = "alice"
     assert not catalog._access_editor.save()
     assert catalog._access_panel.visible and catalog._access_editor._alert.visible
     admin_session.admin = True
@@ -479,6 +483,7 @@ def test_source_card_and_table_drawer_access_editors_admin_vs_viewer(tmp_path):
     assert not viewer_view.catalog.open_access_editor()
 
 
+@needs_permission_editor
 def test_metric_page_access_editor_admin_vs_viewer(tmp_path):
     project, _ = _make_project(tmp_path)
 
@@ -494,13 +499,13 @@ def test_metric_page_access_editor_admin_vs_viewer(tmp_path):
     assert metric_view._access_panel.visible
 
     # Refuses lockout.
-    metric_view._access_editor._deny_groups.value = "admins"
+    metric_view._access_editor.deny_groups_input.value = "admins"
     assert not metric_view._access_editor.save()
     assert metric_view._access_panel.visible and metric_view._access_editor._alert.visible
 
     # Refuses when live admin rights are revoked.
-    metric_view._access_editor._deny_groups.value = ""
-    metric_view._access_editor._deny_users.value = "intern"
+    metric_view._access_editor.deny_groups_input.value = ""
+    metric_view._access_editor.deny_users_input.value = "intern"
     admin_session.admin = False
     assert not metric_view._access_editor.save()
     assert metric_view._access_panel.visible and metric_view._access_editor._alert.visible
@@ -525,6 +530,37 @@ def test_metric_page_access_editor_admin_vs_viewer(tmp_path):
     assert not any("lumen-metric-access" in c for o in viewer_metric.__panel__().select() for c in getattr(o, "css_classes", []))
 
 
+def test_access_editors_hidden_without_permission_editor(tmp_path, monkeypatch):
+    from lumen.flowdash import access_editor
+
+    monkeypatch.setattr(access_editor, "_permission_editor_classes", lambda: None)
+    assert not access_editor.permission_editor_supported()
+
+    project, _ = _make_project(tmp_path)
+    admin_session = FakeSession(project, user="ana", groups=("admins",), admin=True)
+    admin_view = DataPage(admin_session, project, admin=True, navigate=lambda _url: None)
+    assert admin_view._access_dialog is None
+    assert not admin_view.edit_source_access("hr")
+    assert not any("lumen-data-source-access" in getattr(o, "css_classes", []) for o in admin_view.__panel__().select())
+    assert "Access: Allow groups finance, hr; deny user contractor" in _text(admin_view)
+
+    admin_view.catalog.open_table("hr", "employees")
+    assert admin_view.catalog._access_editor is None
+    assert not admin_view.catalog._access_btn.visible
+    assert not admin_view.catalog.open_access_editor()
+    assert admin_view.catalog._access_row.visible
+    assert "Inherited from Source &#x27;hr&#x27;" in admin_view.catalog._access_summary.object
+
+    metric_page = DataPage(admin_session, project, "metrics/payroll", admin=True, navigate=lambda _url: None)
+    metric_view = metric_page.metric
+    assert metric_view._access_editor is None
+    assert metric_view._access_btn is None
+    assert metric_view._access_panel is None
+    assert not metric_view.open_access_editor()
+    assert metric_view._access_summary is not None
+    assert "Inherited from Table hr.salaries" in metric_view._access_summary.object
+
+
 def test_source_card_falls_back_to_loaded_catalog_on_read_error(tmp_path):
     project, _ = _make_project(tmp_path)
     admin_session = FakeSession(project, user="ana", groups=("admins",), admin=True)
@@ -533,10 +569,11 @@ def test_source_card_falls_back_to_loaded_catalog_on_read_error(tmp_path):
     (tmp_path / PROJECT_FILE).write_text("catalog: [unterminated\n", encoding="utf-8")
     admin_view = DataPage(admin_session, project, admin=True, navigate=lambda _url: None)
     assert "Access: Allow groups finance, hr; deny user contractor" in _text(admin_view)
-    assert admin_view.edit_source_access("hr")
-    assert admin_view._access_dialog.editor.permission() == Permission.from_spec(
-        allow_groups=["hr", "finance"], deny_users=["contractor"],
-    )
+    if permission_editor_supported():
+        assert admin_view.edit_source_access("hr")
+        assert admin_view._access_dialog.editor.permission() == Permission.from_spec(
+            allow_groups=["hr", "finance"], deny_users=["contractor"],
+        )
 
 
 def test_source_card_shows_count_for_multiple_inherited_rules(tmp_path):
