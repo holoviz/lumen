@@ -748,7 +748,7 @@ class TestToDataset:
     def test_to_dataset_keeps_derived_time_axis(self, synthetic_dataset, sql_engine):
         """A time axis the SQL derives (CAST(time AS DATE) AS date) replaces
         the source's time dim; it must become a dim, or every date collapses
-        into one cell per (lat, lon) and the axis is lost (gh-2443)."""
+        into one cell per (lat, lon) and the axis is lost."""
         ds = synthetic_dataset.assign_coords(
             time=pd.date_range("2020-01-01", periods=10, freq="12h")
         )
@@ -775,6 +775,35 @@ class TestToDataset:
         result = source.to_dataset("labelled")
         assert set(result.dims) == {"time", "lat", "lon"}
         assert "date" in result.data_vars
+
+    @pytest.mark.parametrize("sql_engine", ["datafusion", "duckdb"])
+    @pytest.mark.parametrize("label", [
+        "CASE WHEN AVG(temperature) > 280 THEN 'warm' ELSE 'cold' END AS cls",
+        "'K' AS units",
+    ])
+    def test_to_dataset_leaves_label_per_cell_a_variable(self, synthetic_dataset, sql_engine, label):
+        """A column with one value per (lat, lon) labels the cells the kept
+        dims already index, so it must not become a dim of the grid."""
+        source = XArraySQLSource(_dataset=synthetic_dataset, sql_engine=sql_engine).create_sql_expr_source({
+            "labelled": f"SELECT lat, lon, {label}, AVG(temperature) AS temperature FROM temperature GROUP BY lat, lon"
+        })
+        result = source.to_dataset("labelled")
+        assert set(result.dims) == {"lat", "lon"}
+        assert int(result["temperature"].isnull().sum()) == 0
+
+    @pytest.mark.parametrize("sql_engine", ["datafusion", "duckdb"])
+    def test_to_dataset_keeps_derived_integer_axis(self, synthetic_dataset, sql_engine):
+        """An integer the SQL derives (EXTRACT(day ...)) is an axis too when
+        the kept dims alone leave several rows per cell."""
+        source = XArraySQLSource(_dataset=synthetic_dataset, sql_engine=sql_engine).create_sql_expr_source({
+            "by_day": (
+                "SELECT EXTRACT(day FROM time) AS day, lat, lon, AVG(temperature) AS mean "
+                "FROM temperature GROUP BY EXTRACT(day FROM time), lat, lon"
+            )
+        })
+        result = source.to_dataset("by_day")
+        assert set(result.dims) == {"day", "lat", "lon"}
+        assert list(result.data_vars) == ["mean"]
 
     def test_get_still_returns_long_form(self, synthetic_dataset):
         """get() is unchanged: it returns the long-form pandas frame."""
