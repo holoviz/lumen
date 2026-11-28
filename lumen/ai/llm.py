@@ -4563,6 +4563,10 @@ class Kilo(OpenAI):
 
     api_key_env_var: str = PROVIDER_ENV_VARS["kilo"]
 
+    mode = param.Selector(default=Mode.MD_JSON, objects=BASE_MODES, doc="""
+        JSON is asked for in plain text, because some free models drop every
+        newline from the string arguments of a tool call.""")
+
     display_name = param.String(
         default="Kilo",
         constant=True,
