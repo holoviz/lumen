@@ -28,7 +28,9 @@ from __future__ import annotations
 import logging
 import typing as t
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import (
+    Callable, Collection, Mapping, Sequence,
+)
 
 from panel_flowdash.auth import Identity, Permission
 
@@ -244,16 +246,6 @@ def parse_access(
     return Permission.from_spec(**parsed), []
 
 
-def _raw_access_permission(value: t.Any) -> Permission:
-    """Parse a raw ``access:`` dict outside a section loader, failing closed if malformed."""
-    if value is None:
-        return Permission()
-    if isinstance(value, Permission):
-        return value
-    parsed, errors = _access_names(value)
-    return _ADMINS_ONLY if errors else Permission.from_spec(**parsed)
-
-
 def parse_access_spec(value: t.Any) -> Permission:
     """
     Parse a Python ``access:`` rule (``None``, ``Permission``, or a mapping of
@@ -269,8 +261,26 @@ def parse_access_spec(value: t.Any) -> Permission:
     return Permission.from_spec(**parsed)
 
 
-def parse_analysis_access(rules: Mapping[str, t.Any] | None) -> dict[str, Permission]:
-    """Validate a mapping of analysis names to ``access:`` rules into ``{name: Permission}``."""
+def _raw_access_permission(value: t.Any) -> Permission:
+    """Parse a raw ``access:`` dict outside a section loader, failing closed if malformed."""
+    try:
+        return parse_access_spec(value)
+    except ValueError:
+        return _ADMINS_ONLY
+
+
+def parse_analysis_access(
+    rules: Mapping[str, t.Any] | None,
+    *,
+    known: Collection[str] | None = None,
+) -> dict[str, Permission]:
+    """
+    Validate a mapping of analysis names to ``access:`` rules into ``{name: Permission}``.
+
+    When ``known`` is given, keys that do not match a registered analysis name
+    log a warning naming them and are ignored; registered analyses without
+    rules remain unrestricted.
+    """
     if rules is None:
         return {}
     if not isinstance(rules, Mapping):
@@ -280,9 +290,23 @@ def parse_analysis_access(rules: Mapping[str, t.Any] | None) -> dict[str, Permis
         if not isinstance(name, str) or not name.strip():
             raise ValueError("Analysis names in `analysis_access` must be non-empty strings.")
         try:
-            parsed[name.strip()] = parse_access_spec(rule)
+            parsed[name] = parse_access_spec(rule)
         except ValueError as exc:
             raise ValueError(f"Invalid access rule for analysis {name!r}: {exc}") from exc
+    if known is not None:
+        known_set = set(known)
+        unknown = sorted(name for name in parsed if name not in known_set)
+        if unknown:
+            rule_word = "rules" if len(unknown) != 1 else "rule"
+            noun = "analyses" if len(unknown) != 1 else "analysis"
+            logger.warning(
+                "Ignoring `analysis_access` %s for unregistered %s %s.",
+                rule_word,
+                noun,
+                ", ".join(repr(name) for name in unknown),
+            )
+            for name in unknown:
+                parsed.pop(name)
     return parsed
 
 

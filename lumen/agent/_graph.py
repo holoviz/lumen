@@ -65,12 +65,7 @@ def analyses(ops: DashboardOps) -> dict[str, Any]:
     The host-registered ``Analysis`` classes or instances the agent may invoke
     in the current session, by name: those in ``lumen.analyses`` whose
     ``_callable_by_llm`` is true and whose ``access:`` rule permits the
-    session. Access checks fail closed per analysis. ``_callable_by_llm``
-    hides an analysis from list_tables, add_analysis and set_config; it is
-    not an access control, since FlowDash's own add_node or YAML tools can
-    still name it. ``agent_sensitive_components=["Lumen/analysis"]`` holds
-    those back for approval, and ``access:`` rules block unauthorized
-    sessions in both the agent and ``AnalysisNode``.
+    session. Access checks fail closed per analysis.
     """
     try:
         live = host_analyses(ops.editor.context)

@@ -360,7 +360,7 @@ async def test_add_analysis_says_when_it_ran_on_capped_input(more, session):
     assert placed.startswith("Placed analysis node 'shares' (NormalizeAmount) on the first 2 rows of 'sales_rows'")
 
 
-async def test_agent_enforces_analysis_access_rules(monkeypatch):
+async def test_agent_hides_and_blocks_restricted_analysis():
     from panel_flowdash.auth import Identity
 
     from lumen.flowdash.access import bind_identity
@@ -404,8 +404,22 @@ async def test_agent_enforces_analysis_access_rules(monkeypatch):
 
         bind_identity(sess.editor, Identity("blocked", groups=frozenset({"admins", "finance"})), admin=True)
         assert list(_graph.analyses(sess.ops)) == ["ExecutiveCard"]
+    finally:
+        sess.close()
 
-        # Access check failures fail closed per analysis.
+
+async def test_agent_analysis_access_fails_closed_on_check_error(monkeypatch):
+    from panel_flowdash.auth import Identity
+
+    from lumen.flowdash.access import bind_identity
+
+    sess = AgentSession(
+        DuckDBSource(uri=":memory:", tables=TABLES),
+        FunctionModel(lambda m, i: ModelResponse([TextPart("")])),
+        analyses=[NormalizeAmount, ExecutiveCard],
+        analysis_access={"NormalizeAmount": {"allow_groups": ["finance"]}},
+    )
+    try:
         bind_identity(sess.editor, Identity("bob", groups=frozenset({"finance"})))
 
         def flaky(name, context):
@@ -415,5 +429,29 @@ async def test_agent_enforces_analysis_access_rules(monkeypatch):
 
         monkeypatch.setattr(_graph, "can_access_analysis", flaky)
         assert list(_graph.analyses(sess.ops)) == ["ExecutiveCard"]
+    finally:
+        sess.close()
+
+
+def test_agent_session_warns_and_ignores_unknown_analysis_access_keys(caplog):
+    import logging
+
+    from panel_flowdash.auth import Identity
+
+    from lumen.flowdash import ANALYSES_ACCESS_KEY
+    from lumen.flowdash.access import bind_identity
+
+    with caplog.at_level(logging.WARNING, logger="lumen.flowdash.access"):
+        sess = AgentSession(
+            DuckDBSource(uri=":memory:", tables=TABLES),
+            FunctionModel(lambda m, i: ModelResponse([TextPart("")])),
+            analyses=[NormalizeAmount, ExecutiveCard],
+            analysis_access={"NormaliseAmount": {"allow_groups": ["finance"]}},
+        )
+    try:
+        assert any("NormaliseAmount" in rec.getMessage() for rec in caplog.records)
+        assert sess.editor.context[ANALYSES_ACCESS_KEY] == {}
+        bind_identity(sess.editor, Identity("sam", groups=frozenset({"sales"})))
+        assert set(_graph.analyses(sess.ops)) == {"NormalizeAmount", "ExecutiveCard"}
     finally:
         sess.close()

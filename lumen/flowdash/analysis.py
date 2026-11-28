@@ -178,10 +178,12 @@ def unbind_analysis(editor: Any, name: str) -> None:
             node._refresh()
 
 
-def missing_analysis(name: str, analyses: Mapping[str, Any]) -> str:
+def missing_analysis(name: str, analyses: Mapping[str, Any], *, restricted: bool = False) -> str:
     """What an analysis node reports when the host provides only ``analyses``."""
     if analyses:
         return f"The app defines no analysis `{name}`; its analyses are: {', '.join(f'`{a}`' for a in sorted(analyses))}."
+    if restricted:
+        return f"The app defines no analysis `{name}` available to this session."
     return 'The app provides no Lumen analyses. Pass `analyses=[...]` to `build_routes`, or set `editor_options = {"context": {"lumen.analyses": {...}}}`.'
 
 
@@ -451,7 +453,10 @@ def check_analysis_config(config: dict[str, Any], inputs: dict[str, Any]) -> Any
     if entry is not None and not can_access_analysis(name, context):
         return CheckDiagnostic(access_denied_analysis(name), field="analysis")
     if entry is None:
-        return CheckDiagnostic(missing_analysis(name, authorized_analyses(context)), field="analysis")
+        return CheckDiagnostic(
+            missing_analysis(name, authorized_analyses(context), restricted=bool(analyses)),
+            field="analysis",
+        )
     pipeline = inputs.get("pipeline")
     columns: list[str] | None = None
     if isinstance(pipeline, Pipeline) and not is_failure(pipeline):
@@ -548,7 +553,9 @@ class AnalysisNode(GlobalFilterTarget, LumenNode):
         if entry is not None and not can_access_analysis(self.analysis, self._context):
             raise PermissionError(access_denied_analysis(self.analysis))
         if entry is None:
-            raise ValueError(missing_analysis(self.analysis, authorized_analyses(self._context)))
+            raise ValueError(
+                missing_analysis(self.analysis, authorized_analyses(self._context), restricted=bool(analyses))
+            )
         return run_analysis(
             entry,
             self.pipeline,
@@ -626,7 +633,9 @@ class AnalysisNode(GlobalFilterTarget, LumenNode):
         if entry is not None and not can_access_analysis(self.analysis, self._context):
             raise PermissionError(access_denied_analysis(self.analysis))
         if entry is None:
-            raise ValueError(missing_analysis(self.analysis, authorized_analyses(self._context)))
+            raise ValueError(
+                missing_analysis(self.analysis, authorized_analyses(self._context), restricted=bool(analyses))
+            )
         result = run_analysis(
             entry, self._shown(self.pipeline), self.params, name=self.analysis, limit=row_ceiling(self.editor),
         )
