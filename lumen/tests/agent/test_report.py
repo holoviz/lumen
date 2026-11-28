@@ -159,7 +159,10 @@ def test_layout_agent_gets_run_pending_wording(monkeypatch):
     assert (wording in full) == has_run_pending
 
 
-@pytest.mark.skipif(not assistant.HAS_RUN_PENDING, reason="panel-flowdash without run_pending")
+@pytest.mark.skipif(
+    not assistant.HAS_RUN_PENDING or "run_pending" not in assistant.DASHBOARD_TOOLS["layout"],
+    reason="panel-flowdash layout tools do not include run_pending",
+)
 async def test_layout_agent_answers_pending_report_question_with_lumen_tools():
     from panel_flowdash.report import turn_outputs
     from pydantic_ai.messages import ToolCallPart
