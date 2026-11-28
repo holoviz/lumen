@@ -14,7 +14,7 @@ from lumen.flowdash import (
     CATALOG_KEY, METRICS_KEY, SOURCE_ALIASES_KEY, SOURCES_KEY, ProjectCatalog,
 )
 from lumen.flowdash.access import (
-    EffectiveAccess, InheritedRule, access_badge, access_to_dict,
+    EffectiveAccess, InheritedRule, access_badge, access_to_dict, can_access,
     can_access_metric, can_access_source, can_access_table,
     describe_permission, effective_metric_access, effective_source_access,
     effective_table_access, lockout_reason, normalize_access,
@@ -189,6 +189,14 @@ def test_access_helpers_and_lockout_checks():
     assert parse_name_list(" hr, finance ,\nhr , ") == ["hr", "finance"]
 
 
+def _effective_allows(effective: EffectiveAccess, identity: Identity | None, *, admin: bool = False) -> bool:
+    return (
+        effective.blocked_reason is None
+        and can_access(effective.own, identity, admin=admin)
+        and all(can_access(rule.permission, identity, admin=admin) for rule in effective.inherited)
+    )
+
+
 def test_effective_access_and_inheritance(tmp_path):
     project, hr = _make_project(tmp_path)
     ctx = project.context
@@ -209,9 +217,14 @@ def test_effective_access_and_inheritance(tmp_path):
 
     hr_user = Identity("alice", groups=frozenset({"hr"}))
     fin_user = Identity("bob", groups=frozenset({"finance"}))
-    assert emp_eff.allows(fin_user) is True
-    assert sal_eff.allows(fin_user) is False
-    assert sal_eff.allows(hr_user) is True
+    contractor = Identity("contractor", groups=frozenset({"hr"}))
+    admin_user = Identity("ana", groups=frozenset({"admins"}))
+    users = (admin_user, hr_user, fin_user, contractor, None)
+
+    # Enforcing functions decide access, and effective_*_access agrees with them for every user.
+    assert can_access_table(hr, "employees", ctx, identity=fin_user) is True
+    assert can_access_table(hr, "salaries", ctx, identity=fin_user) is False
+    assert can_access_table(hr, "salaries", ctx, identity=hr_user) is True
 
     # Metrics inherit from source and every table they read (including SQL joins).
     metrics = project.get("metrics")
@@ -223,13 +236,65 @@ def test_effective_access_and_inheritance(tmp_path):
 
     join_eff = effective_metric_access(metrics["joined_report"], ctx)
     assert [r.label for r in join_eff.inherited] == ["Source 'hr'", "Table hr.salaries"]
-    assert join_eff.allows(fin_user) is False
-    assert join_eff.allows(hr_user) is True
+    assert can_access_metric(metrics["joined_report"], ctx, identity=fin_user) is False
+    assert can_access_metric(metrics["joined_report"], ctx, identity=hr_user) is True
+
+    # Direct file reads on a restricted source are reflected as blocked in effective_metric_access.
+    file_read_spec = {"source": "hr", "sql": "SELECT * FROM read_parquet('secret.parquet')"}
+    file_eff = effective_metric_access(file_read_spec, ctx)
+    assert file_eff.blocked_reason is not None and "read_parquet" in file_eff.blocked_reason
+    assert access_badge(file_eff) == ("Blocked", "error")
+    assert "Blocked:" in effective_access_html(file_eff)
+
+    for ident in users:
+        for adm in (False, True):
+            assert _effective_allows(src_eff, ident, admin=adm) == can_access_source("hr", ctx, identity=ident, admin=adm)
+            assert _effective_allows(emp_eff, ident, admin=adm) == can_access_table(hr, "employees", ctx, identity=ident, admin=adm)
+            assert _effective_allows(sal_eff, ident, admin=adm) == can_access_table(hr, "salaries", ctx, identity=ident, admin=adm)
+            for name, eff in (("headcount", hc_eff), ("payroll", pay_eff), ("joined_report", join_eff)):
+                assert _effective_allows(eff, ident, admin=adm) == can_access_metric(metrics[name], ctx, identity=ident, admin=adm)
+            assert _effective_allows(file_eff, ident, admin=adm) == can_access_metric(file_read_spec, ctx, identity=ident, admin=adm)
 
     html = effective_access_html(pay_eff)
     assert "Inherited from Source &#x27;hr&#x27;" in html
     assert "Inherited from Table hr.salaries" in html
     assert "No own rule (inherits above)" in html
+
+
+def test_set_table_access_resolves_mixed_case_keys(tmp_path):
+    yaml_text = """\
+general:
+  admins: [ana]
+catalog:
+  hr:
+    tables:
+      Salaries:
+        assistant: false
+        access:
+          allow_groups: [hr]
+"""
+    project, hr = _make_project(tmp_path, yaml_text)
+    admin = FakeSession(project, user="ana", groups=("admins",), admin=True)
+    fin_user = Identity("bob", groups=frozenset({"finance"}))
+    alice = Identity("alice", groups=frozenset({"finance"}))
+
+    eff = effective_table_access("hr", hr, "salaries", project.context)
+    assert eff.has_own and not eff.has_inherited
+    assert not can_access_table(hr, "salaries", project.context, identity=fin_user)
+
+    # Updating by lowercase table name updates the existing mixed-case key in place.
+    assert set_table_access(project, "hr", "salaries", {"allow_users": ["alice"]}, app=admin) == []
+    tables = raw_catalog(project)["hr"]["tables"]
+    assert list(tables) == ["Salaries"]
+    assert tables["Salaries"] == {"assistant": False, "access": {"allow_users": ["alice"]}}
+    assert can_access_table(hr, "salaries", project.context, identity=alice)
+    assert not can_access_table(hr, "salaries", project.context, identity=fin_user)
+
+    # Clearing removes the mixed-case rule while preserving sibling settings.
+    assert set_table_access(project, "hr", "salaries", Permission(), app=admin) == []
+    assert raw_catalog(project)["hr"]["tables"] == {"Salaries": {"assistant": False}}
+    assert can_access_table(hr, "salaries", project.context, identity=fin_user)
+    assert effective_table_access("hr", hr, "salaries", project.context).is_empty
 
 
 # ---------------------------------------------------------------------------
@@ -458,3 +523,44 @@ def test_metric_page_access_editor_admin_vs_viewer(tmp_path):
     assert viewer_metric._access_panel is None
     assert not viewer_metric.open_access_editor()
     assert not any("lumen-metric-access" in c for o in viewer_metric.__panel__().select() for c in getattr(o, "css_classes", []))
+
+
+def test_source_card_falls_back_to_loaded_catalog_on_read_error(tmp_path):
+    project, _ = _make_project(tmp_path)
+    admin_session = FakeSession(project, user="ana", groups=("admins",), admin=True)
+
+    # Corrupt flowdash.yaml after loading so raw_section raises ProjectError.
+    (tmp_path / PROJECT_FILE).write_text("catalog: [unterminated\n", encoding="utf-8")
+    admin_view = DataPage(admin_session, project, admin=True, navigate=lambda _url: None)
+    assert "Access: Allow groups finance, hr; deny user contractor" in _text(admin_view)
+    assert admin_view.edit_source_access("hr")
+    assert admin_view._access_dialog.editor.permission() == Permission.from_spec(
+        allow_groups=["hr", "finance"], deny_users=["contractor"],
+    )
+
+
+def test_source_card_shows_count_for_multiple_inherited_rules(tmp_path):
+    yaml_text = """\
+general:
+  admins: [ana]
+catalog:
+  alias_a:
+    access:
+      allow_groups: [hr]
+  alias_b:
+    access:
+      deny_users: [contractor]
+"""
+    hr = DuckDBSource(uri=":memory:", tables=HR_TABLES, name="hr")
+    sources = {"hr": hr}
+    context = {SOURCES_KEY: sources, SOURCE_ALIASES_KEY: {"alias_a": "hr", "alias_b": "hr"}}
+    path = tmp_path / PROJECT_FILE
+    path.write_text(yaml_text, encoding="utf-8")
+    project = load_project(path, context)
+    project.context[CATALOG_KEY] = ProjectCatalog(project)
+    project.context[METRICS_KEY] = ProjectMetrics(project)
+    project.context[UPLOADS_KEY] = Uploads(tmp_path / "uploads", sources, project=project)
+
+    admin_session = FakeSession(project, user="ana", groups=("admins",), admin=True)
+    admin_view = DataPage(admin_session, project, admin=True, navigate=lambda _url: None)
+    assert "Access: Inherited: Allow group hr (+1 more)" in _text(admin_view)

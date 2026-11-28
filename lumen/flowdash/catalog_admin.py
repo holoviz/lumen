@@ -36,7 +36,7 @@ from panel_flowdash.value_text import error_text
 
 from ..sources.base import Source
 from .access import effective_table_access
-from .access_editor import _ACCESS_CSS, AccessRuleEditor, effective_access_html
+from .access_editor import ACCESS_CSS, AccessRuleEditor, effective_access_html
 from .add_data import AddDataDialog
 from .catalog import (
     NOT_ADMIN_ACCESS, ColumnInfo, TableDetail, TableInfo, catalog_tables,
@@ -751,7 +751,7 @@ class CatalogSettings(Viewer):
             css_classes=["flowdash-catalog-drawer-actions"],
         )
         self._build_enrich_panel()
-        self._access_summary = cell("", stylesheets=[_ACCESS_CSS], css_classes=["flowdash-catalog-access-text"])
+        self._access_summary = cell("", stylesheets=[ACCESS_CSS], css_classes=["flowdash-catalog-access-text"])
         self._access_row = pn.Row(
             pmui.Typography("Access", variant="body2", margin=(2, 0, 0, 0), sx={"color": "text.secondary"},
                             width=120, styles={"flex": "0 0 120px"}),

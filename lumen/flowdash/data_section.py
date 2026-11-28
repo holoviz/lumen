@@ -361,15 +361,17 @@ class DataPage(Viewer):
         )
 
     def _card_items(self) -> list[pmui.Paper]:
+        from panel_flowdash.project import ProjectError
+
         from .access import describe_permission, effective_source_access
         from .catalog import raw_section
 
-        section: dict[str, t.Any] = {}
+        section: dict[str, t.Any] | None = None
         if self.admin:
             try:
                 section = raw_section(self.project)
-            except Exception:
-                section = {}
+            except (ProjectError, OSError):
+                section = None
         cards = []
         for summary in self.sources:
             files = ", ".join(summary.files)
@@ -387,7 +389,10 @@ class DataPage(Viewer):
                     if effective.has_inherited:
                         rule_text += " (+ inherited)"
                 else:
-                    rule_text = f"Inherited: {describe_permission(effective.inherited[0].permission)}"
+                    inherited = [r for r in effective.inherited if not r.permission.is_empty]
+                    rule_text = f"Inherited: {describe_permission(inherited[0].permission)}"
+                    if len(inherited) > 1:
+                        rule_text += f" (+{len(inherited) - 1} more)"
                 access_line = f'<div class="line access" title="{esc(rule_text)}">Access: {esc(rule_text)}</div>'
             body = cell(
                 f'<div class="card"><div class="icon">{UPLOAD_SVG if summary.upload is not None else DATABASE_SVG}'
@@ -453,15 +458,17 @@ class DataPage(Viewer):
 
     def edit_source_access(self, ref: str) -> bool:
         """Open the access rules editor dialog for source ``ref`` (admins only)."""
+        from panel_flowdash.project import ProjectError
+
         from .access import effective_source_access
         from .catalog import raw_section, set_source_access
 
         if not self.admin or getattr(self, "_access_dialog", None) is None:
             return False
         try:
-            section = raw_section(self.project)
-        except Exception:
-            section = {}
+            section: dict[str, t.Any] | None = raw_section(self.project)
+        except (ProjectError, OSError):
+            section = None
         effective = effective_source_access(ref, self.context, section=section)
 
         def on_save(perm):

@@ -806,6 +806,17 @@ def set_source_access(
     return []
 
 
+def _table_key(tables: Mapping[str, Any], table: str) -> str:
+    """Resolve an existing table key case-insensitively (matching ``access.py``), else ``table``."""
+    if table in tables:
+        return table
+    target = table.strip().strip('"').lower()
+    for configured in tables:
+        if isinstance(configured, str) and configured.strip().strip('"').lower() == target:
+            return configured
+    return table
+
+
 def set_table_access(
     project: Project,
     ref: str,
@@ -845,15 +856,21 @@ def set_table_access(
             spec = section[ref] = spec if isinstance(spec, dict) else {}
             tables = spec.get("tables")
             tables = spec["tables"] = tables if isinstance(tables, dict) else {}
-            settings = tables.get(table)
-            settings = tables[table] = settings if isinstance(settings, dict) else {}
+            key = _table_key(tables, table)
+            settings = tables.get(key)
+            settings = tables[key] = settings if isinstance(settings, dict) else {}
             settings["access"] = access_dict
         else:
             spec = section.get(ref)
             tables = spec.get("tables") if isinstance(spec, dict) else None
-            settings = tables.get(table) if isinstance(tables, dict) else None
-            if isinstance(settings, dict):
-                settings.pop("access", None)
+            if isinstance(tables, dict):
+                target = table.strip().strip('"').lower()
+                for configured, settings in tables.items():
+                    if isinstance(settings, dict) and (
+                        configured == table
+                        or (isinstance(configured, str) and configured.strip().strip('"').lower() == target)
+                    ):
+                        settings.pop("access", None)
         try:
             project.set(SECTION, _prune(section))
         except ProjectError as exc:

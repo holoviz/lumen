@@ -33,7 +33,7 @@ from .access import (
 
 _SPLIT = re.compile(r"[,\n]+")
 
-_ACCESS_CSS = """
+ACCESS_CSS = """
 .k .access-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .k .access-rules { margin: 6px 0 4px 0; padding-left: 18px; font-size: 0.8125rem;
   color: var(--mui-palette-text-primary); }
@@ -93,6 +93,8 @@ def effective_access_html(effective: EffectiveAccess, *, compact: bool = False) 
         text = "Open to everyone" if compact else "Open to everyone with app access."
         return f'<div class="k"><div class="access-head">{badge}<span class="muted">{esc(text)}</span></div></div>'
     items: list[str] = []
+    if effective.blocked_reason:
+        items.append(f"<li><b>Blocked:</b> {esc(effective.blocked_reason)}</li>")
     for rule in effective.inherited:
         if not rule.permission.is_empty:
             items.append(f"<li><b>Inherited from {esc(rule.label)}:</b> {esc(describe_permission(rule.permission))}</li>")
@@ -101,7 +103,7 @@ def effective_access_html(effective: EffectiveAccess, *, compact: bool = False) 
     elif effective.has_inherited:
         items.append('<li><b>This resource:</b> <span class="muted">No own rule (inherits above)</span></li>')
     if compact:
-        if effective.has_own and not effective.has_inherited:
+        if effective.has_own and not effective.has_inherited and not effective.blocked_reason:
             return (
                 f'<div class="k"><div class="access-head">{badge}'
                 f'<span>{esc(describe_permission(effective.own))}</span></div></div>'
@@ -162,7 +164,7 @@ class AccessRuleEditor(Viewer):
             "Comma-separated user or group names. Leave all fields empty to clear this resource's own rule.",
             margin=(2, 0, 4, 0),
         )
-        self._effective_view = cell("", stylesheets=[_ACCESS_CSS], css_classes=["lumen-access-effective"])
+        self._effective_view = cell("", stylesheets=[ACCESS_CSS], css_classes=["lumen-access-effective"])
         self._lockout_warn = pmui.Alert(
             object="", severity="warning", visible=False, sizing_mode="stretch_width", margin=0,
             css_classes=["lumen-access-lockout-warning"],
