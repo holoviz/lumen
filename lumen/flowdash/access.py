@@ -29,6 +29,7 @@ import logging
 import typing as t
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 
 from panel_flowdash.auth import Identity, Permission
 
@@ -252,6 +253,264 @@ def _raw_access_permission(value: t.Any) -> Permission:
     return _ADMINS_ONLY if errors else Permission.from_spec(**parsed)
 
 
+_ACCESS_ORDER = ("allow_users", "allow_groups", "deny_users", "deny_groups")
+
+
+def access_to_dict(permission: Permission | None) -> dict[str, list[str]]:
+    """Serialize the four resource access fields of ``permission`` as sorted lists, omitting empty ones."""
+    if permission is None:
+        return {}
+    result: dict[str, list[str]] = {}
+    for key in _ACCESS_ORDER:
+        values = getattr(permission, key, ())
+        if values:
+            result[key] = sorted(values)
+    return result
+
+
+def normalize_access(
+    value: Permission | Mapping[str, t.Any] | None,
+    *,
+    section: str | None = None,
+    keys: Sequence[str] = (),
+) -> tuple[Permission, list[Problem]]:
+    """Validate and normalize a ``Permission`` or raw ``access:`` mapping into a resource ``Permission``."""
+    if value is None:
+        return Permission(), []
+    if isinstance(value, Permission):
+        return value, []
+    parsed, errors = _access_names(value)
+    if errors:
+        return Permission(), [
+            Problem(message, section=section, keys=(*keys, *suffix))
+            for suffix, message, _ in errors
+        ]
+    return Permission.from_spec(**parsed), []
+
+
+def lockout_reason(permission: Permission | None, identity: Identity | None) -> str | None:
+    """
+    Why saving ``permission`` would lock out the admin ``identity``, or None if
+    they would still have access. Clearing a rule never locks anyone out.
+    """
+    if permission is None or permission.is_empty:
+        return None
+    if can_access(permission, identity, admin=True):
+        return None
+    if identity is None:
+        return "This rule would lock you out because your session has no identity, so it was not saved."
+    matched_users = sorted(identity.user_names & permission.deny_users)
+    matched_groups = sorted(identity.groups & permission.deny_groups)
+    reasons = []
+    if matched_users:
+        who = ", ".join(repr(u) for u in matched_users)
+        reasons.append(f"denies your user ({who})")
+    if matched_groups:
+        groups = ", ".join(repr(g) for g in matched_groups)
+        reasons.append(f"denies your group{'s' * (len(matched_groups) != 1)} ({groups})")
+    detail = " and ".join(reasons) or "denies your account"
+    return f"This rule {detail}, which would lock you out, so it was not saved."
+
+
+@dataclass(frozen=True)
+class InheritedRule:
+    """An access rule inherited from an upstream source, alias or table."""
+
+    label: str
+    permission: Permission
+
+
+@dataclass(frozen=True)
+class EffectiveAccess:
+    """A resource's own ``access:`` rule together with every rule it inherits."""
+
+    own: Permission = field(default_factory=Permission)
+    inherited: tuple[InheritedRule, ...] = ()
+    blocked_reason: str | None = None
+
+    @property
+    def has_own(self) -> bool:
+        return not self.own.is_empty
+
+    @property
+    def has_inherited(self) -> bool:
+        return any(not rule.permission.is_empty for rule in self.inherited)
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.has_own and not self.has_inherited and self.blocked_reason is None
+
+
+def _join_clause(users: frozenset[str], groups: frozenset[str]) -> str:
+    parts = []
+    if users:
+        names = ", ".join(sorted(users))
+        parts.append(f"user{'s' * (len(users) != 1)} {names}")
+    if groups:
+        names = ", ".join(sorted(groups))
+        parts.append(f"group{'s' * (len(groups) != 1)} {names}")
+    return " or ".join(parts)
+
+
+def describe_permission(permission: Permission | None) -> str:
+    """A concise human-readable summary of one ``Permission``."""
+    if permission is None or permission.is_empty:
+        return "Open to everyone"
+    clauses = []
+    if allow := _join_clause(permission.allow_users, permission.allow_groups):
+        clauses.append(f"Allow {allow}")
+    if deny := _join_clause(permission.deny_users, permission.deny_groups):
+        clauses.append(f"{'deny' if clauses else 'Deny'} {deny}")
+    return "; ".join(clauses)
+
+
+def access_badge(effective: EffectiveAccess) -> tuple[str, str]:
+    """Short status label and chip tone (``outlined``, ``primary``, ``warning`` or ``error``) for ``effective``."""
+    if effective.blocked_reason:
+        return "Blocked", "error"
+    if effective.is_empty:
+        return "Open", "outlined"
+    if effective.has_own and effective.has_inherited:
+        return "Restricted (own + inherited)", "warning"
+    if effective.has_own:
+        return "Restricted", "warning"
+    return "Inherited", "primary"
+
+
+def _section_access_maps(
+    context: Mapping[str, t.Any],
+    section: Mapping[str, t.Any] | None,
+) -> tuple[Mapping[str, Permission], Mapping[str, Mapping[str, Permission]]]:
+    if section is not None:
+        source_access: dict[str, Permission] = {}
+        table_access: dict[str, dict[str, Permission]] = {}
+        for ref, spec in section.items():
+            if not isinstance(spec, Mapping):
+                continue
+            if "access" in spec:
+                perm = _raw_access_permission(spec.get("access"))
+                if not perm.is_empty:
+                    source_access[str(ref)] = perm
+            tables = spec.get("tables")
+            if isinstance(tables, Mapping):
+                for tbl, settings in tables.items():
+                    if isinstance(settings, Mapping) and "access" in settings:
+                        perm = _raw_access_permission(settings.get("access"))
+                        if not perm.is_empty:
+                            table_access.setdefault(str(ref), {})[str(tbl)] = perm
+        return source_access, table_access
+    catalog = _catalog_of(context)
+    return (
+        getattr(catalog, "source_access", None) or {},
+        getattr(catalog, "table_access", None) or {},
+    )
+
+
+def effective_source_access(
+    ref: str,
+    context: Mapping[str, t.Any] | None = None,
+    *,
+    section: Mapping[str, t.Any] | None = None,
+) -> EffectiveAccess:
+    """The own and alias-inherited access rules applying to source ``ref``."""
+    own = Permission()
+    inherited: list[InheritedRule] = []
+    for other, perm in _labelled_source_permissions(ref, context, section=section):
+        if other == ref:
+            own = perm
+        else:
+            inherited.append(InheritedRule(f"Source alias {other!r}", perm))
+    return EffectiveAccess(own=own, inherited=tuple(inherited))
+
+
+def effective_table_access(
+    ref: str,
+    source: Source | None,
+    table: str,
+    context: Mapping[str, t.Any] | None = None,
+    *,
+    section: Mapping[str, t.Any] | None = None,
+) -> EffectiveAccess:
+    """The own and inherited access rules applying to ``table`` of source ``ref``."""
+    from .nodes import lookup_source
+
+    if context is None:
+        from panel_flowdash import dashboard_context
+
+        context = dashboard_context()
+    resolved = source if source is not None else lookup_source(ref, context)
+    target_norm = table.strip().strip('"').lower()
+    table_rules = _labelled_table_permissions(resolved, table, context, ref=ref, section=section)
+
+    own_index: int | None = None
+    for idx, (other, configured, _perm) in enumerate(table_rules):
+        if other != ref:
+            continue
+        if configured == table:
+            own_index = idx
+            break
+        if own_index is None and configured.lower() == target_norm:
+            own_index = idx
+    own = table_rules[own_index][2] if own_index is not None else Permission()
+
+    inherited: list[InheritedRule] = []
+    src_target: Source | str = resolved if resolved is not None else ref
+    for other, perm in _labelled_source_permissions(src_target, context, ref=ref, section=section):
+        label = f"Source {other!r}" if other == ref else f"Source alias {other!r}"
+        inherited.append(InheritedRule(label, perm))
+    for idx, (other, configured, perm) in enumerate(table_rules):
+        if idx != own_index:
+            inherited.append(InheritedRule(f"Table {other}.{configured}", perm))
+    return EffectiveAccess(own=own, inherited=tuple(inherited))
+
+
+def effective_metric_access(
+    metric: t.Any,
+    context: Mapping[str, t.Any] | None = None,
+    *,
+    section: Mapping[str, t.Any] | None = None,
+) -> EffectiveAccess:
+    """The own and inherited access rules applying to ``metric`` (a ``Metric``, ``MetricStatus`` or spec dict)."""
+    from .data import metric_tables
+    from .nodes import lookup_source
+
+    if context is None:
+        from panel_flowdash import dashboard_context
+
+        context = dashboard_context()
+    target, own, source_ref = _metric_parts(metric)
+    blocked_reason = _metric_file_read_reason(target, source_ref, context, section=section)
+    inherited: list[InheritedRule] = []
+    seen: set[tuple[str, Permission]] = set()
+    seen_sources: set[str] = set()
+
+    def add(rule: InheritedRule) -> None:
+        key = (rule.label, rule.permission)
+        if not rule.permission.is_empty and key not in seen:
+            seen.add(key)
+            inherited.append(rule)
+
+    if source_ref:
+        for other, perm in _labelled_source_permissions(source_ref, context, section=section):
+            seen_sources.add(other)
+            label = f"Source {other!r}" if other == source_ref else f"Source alias {other!r}"
+            add(InheritedRule(label, perm))
+
+    for t_ref, t_name in metric_tables(target, context):
+        src = lookup_source(t_ref, context)
+        if src is None:
+            continue
+        for other, perm in _labelled_source_permissions(src, context, ref=t_ref, section=section):
+            if other not in seen_sources:
+                seen_sources.add(other)
+                label = f"Source {other!r}" if other == t_ref else f"Source alias {other!r}"
+                add(InheritedRule(label, perm))
+        for other, configured, perm in _labelled_table_permissions(src, t_name, context, ref=t_ref, section=section):
+            add(InheritedRule(f"Table {other}.{configured}", perm))
+
+    return EffectiveAccess(own=own, inherited=tuple(inherited), blocked_reason=blocked_reason)
+
+
 # ---------------------------------------------------------------------------
 # Evaluating access
 
@@ -333,36 +592,91 @@ def _legacy_target(source: Source, table: str) -> str | None:
     return None
 
 
-def source_permissions(
+def _labelled_source_permissions(
     source_or_ref: Source | str,
     context: Mapping[str, t.Any] | None = None,
-) -> list[Permission]:
-    """Every non-empty source-level ``Permission`` configured for ``source_or_ref`` in the catalog."""
+    *,
+    ref: str | None = None,
+    section: Mapping[str, t.Any] | None = None,
+) -> list[tuple[str, Permission]]:
+    """Every ``(ref, Permission)`` pair configured for ``source_or_ref`` in the catalog or ``section``."""
     from .nodes import lookup_source
 
     if context is None:
         from panel_flowdash import dashboard_context
 
         context = dashboard_context()
-    catalog = _catalog_of(context)
-    source_access = getattr(catalog, "source_access", None)
+    source_access, _ = _section_access_maps(context, section)
     if not source_access:
         return []
     if isinstance(source_or_ref, str):
+        target_ref = source_or_ref
         resolved = lookup_source(source_or_ref, context)
-        if resolved is None:
-            perm = source_access.get(source_or_ref)
-            return [perm] if perm is not None and not perm.is_empty else []
-        root = _root(resolved)
     else:
-        root = _root(source_or_ref)
-    perms: list[Permission] = []
-    for ref, perm in source_access.items():
-        if perm.is_empty:
+        target_ref = ref
+        resolved = source_or_ref
+    if resolved is None:
+        if target_ref is None:
+            return []
+        perm = source_access.get(target_ref)
+        return [(target_ref, perm)] if perm is not None and not perm.is_empty else []
+    root = _root(resolved)
+    return [
+        (other, perm)
+        for other, perm in source_access.items()
+        if not perm.is_empty
+        and ((target_ref is not None and other == target_ref) or lookup_source(other, context) is root)
+    ]
+
+
+def _labelled_table_permissions(
+    source: Source | None,
+    table: str,
+    context: Mapping[str, t.Any] | None = None,
+    *,
+    ref: str | None = None,
+    section: Mapping[str, t.Any] | None = None,
+) -> list[tuple[str, str, Permission]]:
+    """Every ``(ref, configured_table, Permission)`` tuple for ``table`` (or its legacy target) on ``source``."""
+    from .nodes import lookup_source
+
+    if context is None:
+        from panel_flowdash import dashboard_context
+
+        context = dashboard_context()
+    _, table_access = _section_access_maps(context, section)
+    if not table_access:
+        return []
+    resolved = source if source is not None else (lookup_source(ref, context) if ref is not None else None)
+    target_norm = table.strip().strip('"').lower()
+    if resolved is None:
+        if ref is None:
+            return []
+        return [
+            (ref, configured, perm)
+            for configured, perm in (table_access.get(ref) or {}).items()
+            if not perm.is_empty and configured.lower() == target_norm
+        ]
+    root = _root(resolved)
+    names = {target_norm}
+    if (target := _legacy_target(root, table)) is not None:
+        names.add(target.lower())
+    perms: list[tuple[str, str, Permission]] = []
+    for other, tables_map in table_access.items():
+        if not ((ref is not None and other == ref) or lookup_source(other, context) is root):
             continue
-        if (isinstance(source_or_ref, str) and ref == source_or_ref) or lookup_source(ref, context) is root:
-            perms.append(perm)
+        for configured, perm in tables_map.items():
+            if not perm.is_empty and configured.lower() in names:
+                perms.append((other, configured, perm))
     return perms
+
+
+def source_permissions(
+    source_or_ref: Source | str,
+    context: Mapping[str, t.Any] | None = None,
+) -> list[Permission]:
+    """Every non-empty source-level ``Permission`` configured for ``source_or_ref`` in the catalog."""
+    return [perm for _, perm in _labelled_source_permissions(source_or_ref, context)]
 
 
 def table_permissions(
@@ -371,28 +685,7 @@ def table_permissions(
     context: Mapping[str, t.Any] | None = None,
 ) -> list[Permission]:
     """Every non-empty table-level ``Permission`` configured for ``table`` (or its legacy target) on ``source``."""
-    from .nodes import lookup_source
-
-    if context is None:
-        from panel_flowdash import dashboard_context
-
-        context = dashboard_context()
-    catalog = _catalog_of(context)
-    table_access = getattr(catalog, "table_access", None)
-    if not table_access:
-        return []
-    root = _root(source)
-    names = {table.strip().strip('"').lower()}
-    if (target := _legacy_target(root, table)) is not None:
-        names.add(target.lower())
-    perms: list[Permission] = []
-    for ref, tables_map in table_access.items():
-        if lookup_source(ref, context) is not root:
-            continue
-        for configured, perm in tables_map.items():
-            if not perm.is_empty and configured.lower() in names:
-                perms.append(perm)
-    return perms
+    return [perm for _, _, perm in _labelled_table_permissions(source, table, context)]
 
 
 def can_access_source(
@@ -493,17 +786,17 @@ def unauthorized_reads(
     return hidden_reads(sql, source, restricted)
 
 
-def has_access_rules(source: Source, context: Mapping[str, t.Any] | None = None) -> bool:
-    """Whether any ``access:`` rule in the catalog applies to ``source`` (its root) or one of its tables."""
+def _has_access_rules(
+    source: Source,
+    context: Mapping[str, t.Any],
+    *,
+    section: Mapping[str, t.Any] | None = None,
+) -> bool:
     from .nodes import lookup_source
 
-    if context is None:
-        from panel_flowdash import dashboard_context
-
-        context = dashboard_context()
-    if source_permissions(source, context):
+    if _labelled_source_permissions(source, context, section=section):
         return True
-    table_access = getattr(_catalog_of(context), "table_access", None)
+    _, table_access = _section_access_maps(context, section)
     if not table_access:
         return False
     root = _root(source)
@@ -511,6 +804,15 @@ def has_access_rules(source: Source, context: Mapping[str, t.Any] | None = None)
         any(not perm.is_empty for perm in tables_map.values()) and lookup_source(ref, context) is root
         for ref, tables_map in table_access.items()
     )
+
+
+def has_access_rules(source: Source, context: Mapping[str, t.Any] | None = None) -> bool:
+    """Whether any ``access:`` rule in the catalog applies to ``source`` (its root) or one of its tables."""
+    if context is None:
+        from panel_flowdash import dashboard_context
+
+        context = dashboard_context()
+    return _has_access_rules(source, context)
 
 
 def _function_name(node: t.Any) -> str:
@@ -577,6 +879,51 @@ def sql_access_denied(
     return None
 
 
+def _metric_parts(metric: t.Any) -> tuple[t.Any, Permission, str | None]:
+    """Extract ``(target, own_permission, source_ref)`` from a ``Metric``, ``MetricStatus`` or spec dict."""
+    if hasattr(metric, "metric") and hasattr(metric, "spec"):
+        if metric.metric is not None:
+            target = metric.metric
+            raw_src = getattr(target, "source", None)
+            return target, getattr(target, "access", None) or Permission(), raw_src if isinstance(raw_src, str) else None
+        target = metric.spec
+        if isinstance(target, Mapping):
+            raw_src = target.get("source")
+            return target, _raw_access_permission(target.get("access")), raw_src if isinstance(raw_src, str) else None
+        return target, Permission(), None
+    if hasattr(metric, "access"):
+        raw_src = getattr(metric, "source", None)
+        return metric, metric.access or Permission(), raw_src if isinstance(raw_src, str) else None
+    if isinstance(metric, Mapping):
+        raw_src = metric.get("source")
+        return metric, _raw_access_permission(metric.get("access")), raw_src if isinstance(raw_src, str) else None
+    return metric, Permission(), None
+
+
+def _metric_file_read_reason(
+    target: t.Any,
+    source_ref: str | None,
+    context: Mapping[str, t.Any],
+    *,
+    section: Mapping[str, t.Any] | None = None,
+) -> str | None:
+    """Why a SQL metric is denied on a restricted source due to direct file reads or unparseable SQL."""
+    from .nodes import lookup_source
+
+    if not ((sql := _metric_sql(target)) and source_ref):
+        return None
+    source = lookup_source(source_ref, context)
+    if source is None or not _has_access_rules(source, context, section=section):
+        return None
+    try:
+        reads = file_reads(sql, source)
+    except Exception:
+        return "SQL could not be checked for direct file reads on a restricted source."
+    if reads:
+        return access_denied_file_reads(reads)
+    return None
+
+
 def can_access_metric(
     metric: t.Any,
     context: Mapping[str, t.Any] | None = None,
@@ -599,38 +946,11 @@ def can_access_metric(
         identity=identity,
         admin=admin,
     )
-    # Extract the metric's own permission, source ref, and table spec.
-    target = metric
-    perm: Permission | None = None
-    source_ref: str | None = None
-    if hasattr(metric, "metric") and hasattr(metric, "spec"):
-        if metric.metric is not None:
-            target = metric.metric
-            perm = getattr(target, "access", None)
-            source_ref = getattr(target, "source", None)
-        else:
-            target = metric.spec
-            perm = _raw_access_permission(target.get("access")) if isinstance(target, Mapping) else None
-            raw_src = target.get("source") if isinstance(target, Mapping) else None
-            source_ref = raw_src if isinstance(raw_src, str) else None
-    elif hasattr(metric, "access"):
-        perm = metric.access
-        source_ref = getattr(metric, "source", None)
-    elif isinstance(metric, Mapping):
-        perm = _raw_access_permission(metric.get("access"))
-        raw_src = metric.get("source")
-        source_ref = raw_src if isinstance(raw_src, str) else None
-
+    target, perm, source_ref = _metric_parts(metric)
     if not can_access(perm, resolved_identity, admin=resolved_admin):
         return False
-    if (sql := _metric_sql(target)) and source_ref:
-        source = lookup_source(source_ref, context)
-        if source is not None and has_access_rules(source, context):
-            try:
-                if file_reads(sql, source):
-                    return False
-            except Exception:
-                return False
+    if _metric_file_read_reason(target, source_ref, context) is not None:
+        return False
     if source_ref and not can_access_source(
         source_ref,
         context,
@@ -749,10 +1069,14 @@ __all__ = [
     "ACCESS_KEYS",
     "ADMIN_KEY",
     "IDENTITY_KEY",
+    "EffectiveAccess",
+    "InheritedRule",
+    "access_badge",
     "access_denied_file_reads",
     "access_denied_metric",
     "access_denied_source",
     "access_denied_tables",
+    "access_to_dict",
     "attach_access",
     "authorized_metrics",
     "authorized_sources",
@@ -762,9 +1086,15 @@ __all__ = [
     "can_access_metric",
     "can_access_source",
     "can_access_table",
+    "describe_permission",
+    "effective_metric_access",
+    "effective_source_access",
+    "effective_table_access",
     "file_reads",
     "has_access_rules",
     "is_admin",
+    "lockout_reason",
+    "normalize_access",
     "parse_access",
     "restricted_tables",
     "session_identity",

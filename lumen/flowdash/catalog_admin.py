@@ -35,10 +35,15 @@ from panel_flowdash.project import Problem, Project, ProjectError
 from panel_flowdash.value_text import error_text
 
 from ..sources.base import Source
+from .access import effective_table_access
+from .access_editor import (
+    ACCESS_CSS, build_access_editor, effective_access_html, load_access_editor,
+)
 from .add_data import AddDataDialog
 from .catalog import (
-    ColumnInfo, TableDetail, TableInfo, catalog_tables, known_info, plain_text,
-    raw_section, safe_error, set_assistant, table_detail, table_info,
+    NOT_ADMIN_ACCESS, ColumnInfo, TableDetail, TableInfo, catalog_tables,
+    known_info, plain_text, raw_section, safe_error, set_assistant,
+    set_table_access, table_detail, table_info,
 )
 from .metadata import (
     NO_MODEL, NO_STORE, NOT_ADMIN_ENRICH, NOT_ADMIN_REFRESH, EnrichmentModel,
@@ -733,15 +738,43 @@ class CatalogSettings(Viewer):
             visible=self.editable, css_classes=["flowdash-catalog-edit-descriptions"],
         )
         self._edit_desc_btn.on_click(lambda _event: self.open_descriptions_editor())
+        self._access_editor = (
+            build_access_editor(
+                title="Table access rules", framed=True, app=self._app, project=self.project,
+                on_save=self._save_table_access, on_cancel=self.close_access_editor,
+            )
+            if self.editable
+            else None
+        )
+        self._access_btn = pmui.Button(
+            label="Access", icon="lock_open", variant="outlined", size="small", margin=0,
+            visible=self.editable and self._access_editor is not None, css_classes=["flowdash-catalog-access"],
+        )
+        self._access_btn.on_click(lambda _event: self.open_access_editor())
         self._drawer_actions = pn.Row(
             self._drawer_refresh,
             self._enrich_btn,
             self._edit_desc_btn,
+            self._access_btn,
             margin=0, sizing_mode="stretch_width",
             styles={"gap": "8px", "flex-wrap": "wrap", "align-items": "center"},
             css_classes=["flowdash-catalog-drawer-actions"],
         )
         self._build_enrich_panel()
+        self._access_summary = cell("", stylesheets=[ACCESS_CSS], css_classes=["flowdash-catalog-access-text"])
+        self._access_row = pn.Row(
+            pmui.Typography("Access", variant="body2", margin=(2, 0, 0, 0), sx={"color": "text.secondary"},
+                            width=120, styles={"flex": "0 0 120px"}),
+            self._access_summary,
+            margin=0, sizing_mode="stretch_width", visible=self.editable,
+            styles={"gap": "16px", "align-items": "flex-start"},
+            css_classes=["flowdash-catalog-access-summary"],
+        )
+        self._access_panel = pn.Column(
+            *([self._access_editor] if self._access_editor is not None else []),
+            margin=0, sizing_mode="stretch_width", visible=False,
+            css_classes=["flowdash-catalog-access-editor"],
+        )
         self._first_rows = pmui.Card(
             self._sample, title="First rows", collapsible=True, collapsed=False, margin=0, title_variant="body1",
             sizing_mode="stretch_width", css_classes=["flowdash-catalog-first-rows"],
@@ -777,7 +810,9 @@ class CatalogSettings(Viewer):
         fields = pn.Column(
             self._drawer_actions,
             self._enrich_panel,
+            self._access_panel,
             self._switch_row,
+            self._access_row,
             self._details,
             self._used_row,
             self._loading,
@@ -1042,6 +1077,41 @@ class CatalogSettings(Viewer):
             self._enrich_spinner.visible = False
             self._enrich_panel.visible = False
 
+    def open_access_editor(self) -> bool:
+        """Open the inline access rules editor for the selected table (admins only)."""
+        if not self.editable or self.selected is None or self._access_editor is None:
+            return False
+        ref, table = self.selected
+        row = self._row(ref, table)
+        if row is None:
+            return False
+        effective = effective_table_access(ref, row["source"], table, self.project.context or {}, section=self.section())
+        load_access_editor(
+            self._access_editor, effective, title=f"Access rules for {table}", app=self._app, project=self.project,
+        )
+        self._access_panel.visible = True
+        return True
+
+    def close_access_editor(self) -> None:
+        """Close the inline access rules editor without saving."""
+        self._access_panel.visible = False
+        if self._access_editor is not None:
+            self._access_editor.show_problems([])
+
+    def _save_table_access(self, perm: t.Any) -> list[Problem]:
+        if not self.editable or self.selected is None:
+            return [Problem(NOT_ADMIN_ACCESS)]
+        ref, table = self.selected
+        problems = set_table_access(self.project, ref, table, perm, app=self._app)
+        if problems:
+            return problems
+        self.close_access_editor()
+        self._render_head()
+        self.refresh()
+        if self._app is not None and hasattr(self._app, "_notify"):
+            self._app._notify("success", f"Saved access rules for {table}.")
+        return []
+
     def _build_confirm(self):
         self._confirm_text = cell("")
         cancel = pmui.Button(label="Cancel", variant="outlined", color="default", margin=0)
@@ -1104,6 +1174,7 @@ class CatalogSettings(Viewer):
     def _on_drawer_open(self, event):
         if not event.new:
             self.cancel_enrich()
+            self.close_access_editor()
             self.selected = None
             if self._on_select is not None:
                 self._on_select(None)
@@ -1123,6 +1194,7 @@ class CatalogSettings(Viewer):
         if row is None:
             return
         self.cancel_enrich()
+        self.close_access_editor()
         self.selected = (ref, table)
         self._detail = None
         self._model_known = None
@@ -1199,6 +1271,17 @@ class CatalogSettings(Viewer):
             description="" if has_model else NO_MODEL,
         )
         self._edit_desc_btn.param.update(visible=self.editable, disabled=not loaded)
+        if self.editable:
+            effective = effective_table_access(ref, source, table, self.project.context or {}, section=self.section())
+            self._access_summary.object = effective_access_html(effective, compact=True)
+            self._access_row.visible = True
+            self._access_btn.param.update(
+                visible=self._access_editor is not None, icon="lock" if not effective.is_empty else "lock_open",
+            )
+        else:
+            self._access_row.visible = False
+            self._access_btn.visible = False
+            self._access_panel.visible = False
         self._rendering = True
         try:
             self._drawer_switch.value = row["assistant"]
@@ -1281,6 +1364,7 @@ class CatalogSettings(Viewer):
     def close_table(self):
         """Close the drawer."""
         self.cancel_enrich()
+        self.close_access_editor()
         if self._drawer.open:
             self._drawer.open = False
         self.selected = None
