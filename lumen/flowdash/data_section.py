@@ -41,15 +41,6 @@ _WIDE = 900
 MOVED = {"catalog": f"/{ROUTE}", "metrics": f"/{ROUTE}/metrics"}
 
 
-def moved_admin_pages() -> dict[str, str]:
-    """Admin view sections relocated into the Data section, by target Data URL."""
-    from .mcp import mcp_supported
-
-    moved = dict(MOVED)
-    if mcp_supported():
-        moved["mcp"] = f"/{ROUTE}/integrations"
-    return moved
-
 _NAV_SX = {
     "py": 0,
     "& .MuiListItemButton-root": {"pl": "21px", "pr": 2, "py": 0.75, "borderLeft": "3px solid transparent"},
@@ -574,8 +565,7 @@ def redirect_moved_admin_pages(app: t.Any) -> None:
         return
 
     def admin_view(pathname: str) -> t.Any:
-        moved = moved_admin_pages()
-        target = moved.get(pathname.strip("/").split("/", 1)[-1]) if pathname.strip("/").count("/") == 1 else None
+        target = MOVED.get(pathname.strip("/").split("/", 1)[-1]) if pathname.strip("/").count("/") == 1 else None
         if target is None:
             return show_admin(pathname)
         doc = pn.state.curdoc
