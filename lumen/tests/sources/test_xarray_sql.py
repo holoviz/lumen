@@ -744,6 +744,67 @@ class TestToDataset:
         assert "time" not in result.dims
         assert set(result.dims) == {"lat", "lon"}
 
+    @pytest.mark.parametrize("sql_engine", ["datafusion", "duckdb"])
+    def test_to_dataset_keeps_derived_time_axis(self, synthetic_dataset, sql_engine):
+        """A time axis the SQL derives (CAST(time AS DATE) AS date) replaces
+        the source's time dim; it must become a dim, or every date collapses
+        into one cell per (lat, lon) and the axis is lost."""
+        ds = synthetic_dataset.assign_coords(
+            time=pd.date_range("2020-01-01", periods=10, freq="12h")
+        )
+        source = XArraySQLSource(_dataset=ds, sql_engine=sql_engine).create_sql_expr_source({
+            "daily": (
+                "SELECT CAST(time AS DATE) AS date, lat, lon, AVG(temperature) AS temperature "
+                "FROM temperature GROUP BY CAST(time AS DATE), lat, lon"
+            )
+        })
+        result = source.to_dataset("daily")
+        assert set(result.dims) == {"date", "lat", "lon"}
+        assert list(result.data_vars) == ["temperature"]
+        expected = ds["temperature"].resample(time="1D").mean()
+        np.testing.assert_allclose(
+            result["temperature"].transpose("date", "lat", "lon").values, expected.values
+        )
+
+    def test_to_dataset_leaves_derived_label_beside_its_dim(self, synthetic_dataset):
+        """A derived column next to the dim it came from labels that dim's
+        cells; the source dims already make a grid, so it stays a variable."""
+        source = XArraySQLSource(_dataset=synthetic_dataset).create_sql_expr_source({
+            "labelled": "SELECT time, lat, lon, temperature, CAST(time AS DATE) AS date FROM temperature"
+        })
+        result = source.to_dataset("labelled")
+        assert set(result.dims) == {"time", "lat", "lon"}
+        assert "date" in result.data_vars
+
+    @pytest.mark.parametrize("sql_engine", ["datafusion", "duckdb"])
+    @pytest.mark.parametrize("label", [
+        "CASE WHEN AVG(temperature) > 280 THEN 'warm' ELSE 'cold' END AS cls",
+        "'K' AS units",
+    ])
+    def test_to_dataset_leaves_label_per_cell_a_variable(self, synthetic_dataset, sql_engine, label):
+        """A column with one value per (lat, lon) labels the cells the kept
+        dims already index, so it must not become a dim of the grid."""
+        source = XArraySQLSource(_dataset=synthetic_dataset, sql_engine=sql_engine).create_sql_expr_source({
+            "labelled": f"SELECT lat, lon, {label}, AVG(temperature) AS temperature FROM temperature GROUP BY lat, lon"
+        })
+        result = source.to_dataset("labelled")
+        assert set(result.dims) == {"lat", "lon"}
+        assert int(result["temperature"].isnull().sum()) == 0
+
+    @pytest.mark.parametrize("sql_engine", ["datafusion", "duckdb"])
+    def test_to_dataset_keeps_derived_integer_axis(self, synthetic_dataset, sql_engine):
+        """An integer the SQL derives (EXTRACT(day ...)) is an axis too when
+        the kept dims alone leave several rows per cell."""
+        source = XArraySQLSource(_dataset=synthetic_dataset, sql_engine=sql_engine).create_sql_expr_source({
+            "by_day": (
+                "SELECT EXTRACT(day FROM time) AS day, lat, lon, AVG(temperature) AS mean "
+                "FROM temperature GROUP BY EXTRACT(day FROM time), lat, lon"
+            )
+        })
+        result = source.to_dataset("by_day")
+        assert set(result.dims) == {"day", "lat", "lon"}
+        assert list(result.data_vars) == ["mean"]
+
     def test_get_still_returns_long_form(self, synthetic_dataset):
         """get() is unchanged: it returns the long-form pandas frame."""
         source = XArraySQLSource(_dataset=synthetic_dataset)
